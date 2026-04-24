@@ -12,6 +12,7 @@ export type JellyfinAudioItem = {
   Album?: string
   Artists?: string[]
   RunTimeTicks?: number
+  ServerId?: string
 }
 
 type JellyfinItemsResponse = {
@@ -138,7 +139,7 @@ export async function fetchAudioLibrary(
     IncludeItemTypes: 'Audio',
     Limit: String(limit),
     StartIndex: String(startIndex),
-    Fields: 'Path,RunTimeTicks,PrimaryImageAspectRatio,MediaSources',
+    Fields: 'Path,RunTimeTicks,PrimaryImageAspectRatio,MediaSources,Artists,Album,ServerId',
   })
 
   if (searchTerm.trim()) {
@@ -189,6 +190,16 @@ export function buildImageUrl(
   const baseUrl = cleanUrl(serverUrl)
 
   return `${baseUrl}/Items/${itemId}/Images/Primary?api_key=${encodeURIComponent(token)}&maxHeight=280&maxWidth=280`
+}
+
+export function buildWebUrl(
+  serverUrl: string,
+  itemId: string,
+  serverId?: string,
+): string {
+  const baseUrl = cleanUrl(serverUrl)
+  const serverPart = serverId ? `&serverId=${serverId}` : ''
+  return `${baseUrl}/web/index.html#!/details?id=${itemId}${serverPart}`
 }
 
 export function msFromTicks(ticks?: number): number {

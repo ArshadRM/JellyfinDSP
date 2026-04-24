@@ -1,4 +1,4 @@
-import { animate, motion } from 'framer-motion'
+import { animate, motion, AnimatePresence } from 'framer-motion'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { AudioEngine } from './lib/audioEngine'
@@ -6,6 +6,7 @@ import {
   authenticate,
   buildImageUrl,
   buildStreamUrl,
+  buildWebUrl,
   fetchAudioLibrary,
   msFromTicks,
 } from './lib/jellyfin'
@@ -59,7 +60,7 @@ function shuffleItems(items: JellyfinAudioItem[]): JellyfinAudioItem[] {
 
 function App() {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL)
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState('Guest')
   const [password, setPassword] = useState('')
   const [token, setToken] = useState('')
   const [userId, setUserId] = useState('')
@@ -69,7 +70,7 @@ function App() {
   const [tracks, setTracks] = useState<JellyfinAudioItem[]>([])
   const [totalTrackCount, setTotalTrackCount] = useState(0)
   const [selectedTrack, setSelectedTrack] = useState<JellyfinAudioItem | null>(null)
-  const [masterVolume, setMasterVolume] = useState(0.85)
+  const [masterVolume, setMasterVolume] = useState(1.00)
   const [isSpeedEnabled, setIsSpeedEnabled] = useState(true)
   const [speedPercent, setSpeedPercent] = useState(80)
   const [adjustPitch, setAdjustPitch] = useState(true)
@@ -88,6 +89,9 @@ function App() {
   const [duration, setDuration] = useState(0)
   const [scrubberPeaks, setScrubberPeaks] = useState<number[]>([])
   const [hasInitialShuffleLoaded, setHasInitialShuffleLoaded] = useState(false)
+  const [isSpeedExpanded, setIsSpeedExpanded] = useState(true)
+  const [isLowPassExpanded, setIsLowPassExpanded] = useState(true)
+  const [isPhaserExpanded, setIsPhaserExpanded] = useState(true)
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -260,6 +264,20 @@ function App() {
       setHasInitialShuffleLoaded(false)
     }
   }, [token, userId])
+
+  useEffect(() => {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw || token) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      const fakeEvent = { preventDefault: () => { } } as React.FormEvent<HTMLFormElement>
+      void handleLogin(fakeEvent)
+    }, 800)
+
+    return () => window.clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -969,6 +987,29 @@ function App() {
             <small>{track.Artists?.join(', ') || track.Album || 'Unknown artist'}</small>
           </span>
           <span className="track-time">{duration}</span>
+          <a
+            href={buildWebUrl(serverUrl, track.Id, track.ServerId)}
+            target="_blank"
+            rel="noreferrer"
+            className="jellyfin-link"
+            onClick={(e) => e.stopPropagation()}
+            title="Open in Jellyfin"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              stroke="currentColor"
+              strokeWidth="2"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+          </a>
         </motion.button>
       )
     })
@@ -980,47 +1021,48 @@ function App() {
       <main className="shell">
         <section className="panel left-panel">
           <h1>JellyfinDSP</h1>
-          <p className="subhead">DayCore-style playback + low-pass tuning.</p>
 
-          <form className="auth-form" onSubmit={handleLogin}>
-            <label>
-              Jellyfin URL
-              <input
-                value={serverUrl}
-                onChange={(event) => setServerUrl(event.target.value)}
-                placeholder="https://watch.prnt.ink"
-                required
-              />
-            </label>
-            <label>
-              Username
-              <input
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-            </label>
-            <div className="auth-actions">
-              <button type="submit">Connect</button>
-              <button
-                type="button"
-                className="ghost"
-                onClick={handleLogout}
-                disabled={!isAuthenticated}
-              >
-                Logout
-              </button>
-            </div>
-          </form>
+          <details className="auth-section">
+            <summary>Jellyfin Connection</summary>
+            <form className="auth-form" onSubmit={handleLogin}>
+              <label>
+                Jellyfin URL
+                <input
+                  value={serverUrl}
+                  onChange={(event) => setServerUrl(event.target.value)}
+                  placeholder="https://watch.prnt.ink"
+                  required
+                />
+              </label>
+              <label>
+                Username
+                <input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Password
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+              <div className="auth-actions">
+                <button type="submit">Connect</button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={handleLogout}
+                  disabled={!isAuthenticated}
+                >
+                  Logout
+                </button>
+              </div>
+            </form>
+          </details>
 
           <p className="status">{status}</p>
 
@@ -1051,144 +1093,222 @@ function App() {
           </div>
 
           <div className="control-card">
-            <div className="menu-head">
-              <h2>Speed</h2>
-              <button
-                type="button"
-                onClick={() => setIsSpeedEnabled((prev) => !prev)}
-              >
-                {isSpeedEnabled ? 'Speed On' : 'Speed Off'}
-              </button>
+            <div className={`menu-head ${isSpeedExpanded ? 'expanded' : ''}`}>
+              <h2 onClick={() => setIsSpeedExpanded((prev) => !prev)}>Speed</h2>
+              <div className="menu-actions">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  onClick={() => {
+                    setSpeedPercent(80)
+                    setAdjustPitch(true)
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className={isSpeedEnabled ? '' : 'off-btn'}
+                  onClick={() => setIsSpeedEnabled((prev) => !prev)}
+                >
+                  {isSpeedEnabled ? 'On' : 'Off'}
+                </button>
+              </div>
             </div>
 
-            <label>
-              Speed ({speedPercent}%)
-              <input
-                type="range"
-                min={60}
-                max={160}
-                step={1}
-                value={speedPercent}
-                onChange={(event) => setSpeedPercent(Number(event.target.value))}
-              />
-            </label>
+            <AnimatePresence>
+              {isSpeedExpanded && (
+                <motion.div
+                  className="menu-content"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <label>
+                    Speed ({speedPercent}%)
+                    <input
+                      type="range"
+                      min={60}
+                      max={160}
+                      step={1}
+                      value={speedPercent}
+                      onChange={(event) => setSpeedPercent(Number(event.target.value))}
+                    />
+                  </label>
 
-            <label className="inline-switch">
-              <input
-                type="checkbox"
-                checked={adjustPitch}
-                onChange={(event) => setAdjustPitch(event.target.checked)}
-              />
-              Adjust Pitch
-            </label>
+                  <label className="inline-switch">
+                    <input
+                      type="checkbox"
+                      checked={adjustPitch}
+                      onChange={(event) => setAdjustPitch(event.target.checked)}
+                    />
+                    Adjust Pitch
+                  </label>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="control-card">
-            <div className="menu-head">
-              <h2>Low Pass</h2>
-              <button
-                type="button"
-                onClick={() => setIsLowPassEnabled((prev) => !prev)}
-              >
-                {isLowPassEnabled ? 'Low Pass On' : 'Low Pass Off'}
-              </button>
+            <div className={`menu-head ${isLowPassExpanded ? 'expanded' : ''}`}>
+              <h2 onClick={() => setIsLowPassExpanded((prev) => !prev)}>Low Pass</h2>
+              <div className="menu-actions">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  onClick={() => {
+                    setLowPassFrequency(55)
+                    setLowPassQ(0.80)
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className={isLowPassEnabled ? '' : 'off-btn'}
+                  onClick={() => setIsLowPassEnabled((prev) => !prev)}
+                >
+                  {isLowPassEnabled ? 'On' : 'Off'}
+                </button>
+              </div>
             </div>
 
-            <label>
-              Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
-              <input
-                type="range"
-                min={10}
-                max={10000}
-                step={1}
-                value={lowPassFrequency}
-                onChange={(event) => setLowPassFrequency(Number(event.target.value))}
-              />
-            </label>
+            <AnimatePresence>
+              {isLowPassExpanded && (
+                <motion.div
+                  className="menu-content"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <label>
+                    Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
+                    <input
+                      type="range"
+                      min={10}
+                      max={10000}
+                      step={1}
+                      value={lowPassFrequency}
+                      onChange={(event) => setLowPassFrequency(Number(event.target.value))}
+                    />
+                  </label>
 
-            <label>
-              Resonance / Q ({lowPassQ.toFixed(2)})
-              <input
-                type="range"
-                min={0.01}
-                max={5}
-                step={0.01}
-                value={lowPassQ}
-                onChange={(event) => setLowPassQ(Number(event.target.value))}
-              />
-            </label>
+                  <label>
+                    Resonance / Q ({lowPassQ.toFixed(2)})
+                    <input
+                      type="range"
+                      min={0.01}
+                      max={5}
+                      step={0.01}
+                      value={lowPassQ}
+                      onChange={(event) => setLowPassQ(Number(event.target.value))}
+                    />
+                  </label>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="control-card">
-            <div className="menu-head">
-              <h2>Phase Shifter</h2>
-              <button
-                type="button"
-                onClick={() => setIsPhaserEnabled((prev) => !prev)}
-              >
-                {isPhaserEnabled ? 'Phaser On' : 'Phaser Off'}
-              </button>
+            <div className={`menu-head ${isPhaserExpanded ? 'expanded' : ''}`}>
+              <h2 onClick={() => setIsPhaserExpanded((prev) => !prev)}>Phase Shifter</h2>
+              <div className="menu-actions">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  onClick={() => {
+                    setPhaserMinFreq(440)
+                    setPhaserMaxFreq(1600)
+                    setPhaserRate(0.5)
+                    setPhaserDepth(1.0)
+                    setPhaserFeedback(0.7)
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className={isPhaserEnabled ? '' : 'off-btn'}
+                  onClick={() => setIsPhaserEnabled((prev) => !prev)}
+                >
+                  {isPhaserEnabled ? 'On' : 'Off'}
+                </button>
+              </div>
             </div>
 
-            <label>
-              Min Frequency ({Math.round(phaserMinFreq)} Hz)
-              <input
-                type="range"
-                min={10}
-                max={20000}
-                step={1}
-                value={phaserMinFreq}
-                onChange={(event) => setPhaserMinFreq(Number(event.target.value))}
-              />
-            </label>
+            <AnimatePresence>
+              {isPhaserExpanded && (
+                <motion.div
+                  className="menu-content"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <label>
+                    Min Frequency ({Math.round(phaserMinFreq)} Hz)
+                    <input
+                      type="range"
+                      min={10}
+                      max={20000}
+                      step={1}
+                      value={phaserMinFreq}
+                      onChange={(event) => setPhaserMinFreq(Number(event.target.value))}
+                    />
+                  </label>
 
-            <label>
-              Max Frequency ({Math.round(phaserMaxFreq)} Hz)
-              <input
-                type="range"
-                min={10}
-                max={20000}
-                step={1}
-                value={phaserMaxFreq}
-                onChange={(event) => setPhaserMaxFreq(Number(event.target.value))}
-              />
-            </label>
+                  <label>
+                    Max Frequency ({Math.round(phaserMaxFreq)} Hz)
+                    <input
+                      type="range"
+                      min={10}
+                      max={20000}
+                      step={1}
+                      value={phaserMaxFreq}
+                      onChange={(event) => setPhaserMaxFreq(Number(event.target.value))}
+                    />
+                  </label>
 
-            <label>
-              Rate ({phaserRate.toFixed(2)} Hz)
-              <input
-                type="range"
-                min={0}
-                max={10}
-                step={0.01}
-                value={phaserRate}
-                onChange={(event) => setPhaserRate(Number(event.target.value))}
-              />
-            </label>
+                  <label>
+                    Rate ({phaserRate.toFixed(2)} Hz)
+                    <input
+                      type="range"
+                      min={0}
+                      max={10}
+                      step={0.01}
+                      value={phaserRate}
+                      onChange={(event) => setPhaserRate(Number(event.target.value))}
+                    />
+                  </label>
 
-            <label>
-              Depth ({Math.round(phaserDepth * 100)}%)
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={phaserDepth}
-                onChange={(event) => setPhaserDepth(Number(event.target.value))}
-              />
-            </label>
+                  <label>
+                    Depth ({Math.round(phaserDepth * 100)}%)
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={phaserDepth}
+                      onChange={(event) => setPhaserDepth(Number(event.target.value))}
+                    />
+                  </label>
 
-            <label>
-              Feedback ({Math.round(phaserFeedback * 100)}%)
-              <input
-                type="range"
-                min={0}
-                max={0.99}
-                step={0.01}
-                value={phaserFeedback}
-                onChange={(event) => setPhaserFeedback(Number(event.target.value))}
-              />
-            </label>
+                  <label>
+                    Feedback ({Math.round(phaserFeedback * 100)}%)
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.99}
+                      step={0.01}
+                      value={phaserFeedback}
+                      onChange={(event) => setPhaserFeedback(Number(event.target.value))}
+                    />
+                  </label>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </section>
 

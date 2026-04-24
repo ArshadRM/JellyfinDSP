@@ -223,6 +223,63 @@ button:disabled {
   gap: 0.4rem;
 }
 
+.menu-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.menu-head h2 {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  user-select: none;
+  flex: 1;
+}
+
+.menu-head h2::before {
+  content: '▶';
+  font-size: 0.72rem;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+.menu-head.expanded h2::before {
+  transform: rotate(90deg);
+}
+
+.menu-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  overflow: hidden;
+}
+
+.reset-btn {
+  background: transparent;
+  border: 1px solid rgba(154, 176, 202, 0.3);
+  color: var(--text-dim);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.reset-btn:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.off-btn {
+  background: rgba(19, 29, 45, 0.9) !important;
+  border-color: rgba(186, 199, 216, 0.2) !important;
+  color: var(--text-dim) !important;
+}
+
 .library-head {
   display: flex;
   align-items: center;
@@ -261,7 +318,7 @@ button:disabled {
 
 .track-card {
   display: grid;
-  grid-template-columns: 56px 1fr auto;
+  grid-template-columns: 56px 1fr auto auto;
   gap: 0.7rem;
   align-items: center;
   border: 1px solid rgba(159, 185, 219, 0.25);
@@ -319,6 +376,41 @@ button:disabled {
   border: 1px dashed rgba(161, 181, 204, 0.3);
   border-radius: 12px;
   padding: 1rem;
+}
+.auth-section summary {
+  cursor: pointer;
+  padding: 0.4rem 0.2rem;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text-dim);
+  transition: color 0.2s;
+  list-style: none;
+}
+.auth-section summary::before {
+  content: '▶';
+  display: inline-block;
+  margin-right: 0.5rem;
+  font-size: 0.8rem;
+  transition: transform 0.2s;
+}
+.auth-section[open] summary::before {
+  transform: rotate(90deg);
+}
+.auth-section summary:hover {
+  color: var(--accent);
+}
+.jellyfin-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  transition: color 0.2s, transform 0.2s;
+  padding: 0.4rem;
+}
+.jellyfin-link:hover {
+  color: var(--accent);
+  transform: scale(1.1);
 }
 
 .native-player {
