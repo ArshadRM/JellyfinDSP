@@ -29,9 +29,9 @@ export type FetchAudioLibraryOptions = {
   limit?: number
 }
 
-const APP_CLIENT = 'JellyfinOSU'
+const APP_CLIENT = 'JellyfinDSP'
 const APP_DEVICE = 'Web Browser'
-const APP_DEVICE_ID = 'jellyfinosu-web'
+const APP_DEVICE_ID = 'jellyfindsp-web'
 const APP_VERSION = '0.1.0'
 
 function cleanUrl(serverUrl: string): string {

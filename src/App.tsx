@@ -12,7 +12,7 @@ import {
 import type { JellyfinAudioItem } from './lib/jellyfin'
 
 const DEFAULT_SERVER_URL = 'https://watch.prnt.ink'
-const STORAGE_KEY = 'jellyfinosu.session'
+const STORAGE_KEY = 'jellyfindsp.session'
 
 type Session = {
   serverUrl: string
@@ -979,7 +979,7 @@ function App() {
       <canvas ref={backgroundWaveformRef} className="global-background-waveform" />
       <main className="shell">
         <section className="panel left-panel">
-          <h1>JellyfinOSU</h1>
+          <h1>JellyfinDSP</h1>
           <p className="subhead">DayCore-style playback + low-pass tuning.</p>
 
           <form className="auth-form" onSubmit={handleLogin}>
