@@ -1,0 +1,6 @@
+services:
+  jellyfindsp:
+    build: .
+    ports:
+      - "26515:80"
+    restart: unless-stopped

@@ -13,6 +13,7 @@ export type JellyfinAudioItem = {
   Artists?: string[]
   RunTimeTicks?: number
   ServerId?: string
+  Type?: string
 }
 
 type JellyfinItemsResponse = {
@@ -132,32 +133,85 @@ export async function fetchAudioLibrary(
 ): Promise<JellyfinAudioLibraryPage> {
   const startIndex = Math.max(0, Math.floor(options?.startIndex ?? 0))
   const limit = Math.max(1, Math.min(500, Math.floor(options?.limit ?? 220)))
-
   const baseUrl = cleanUrl(serverUrl)
-  const params = new URLSearchParams({
-    Recursive: 'true',
-    IncludeItemTypes: 'Audio',
-    Limit: String(limit),
-    StartIndex: String(startIndex),
-    Fields: 'Path,RunTimeTicks,PrimaryImageAspectRatio,MediaSources,Artists,Album,ServerId',
-  })
 
-  if (searchTerm.trim()) {
-    params.set('SearchTerm', searchTerm.trim())
+  const commonFields = 'Path,RunTimeTicks,PrimaryImageAspectRatio,Artists,Album,ServerId'
+
+  // If no search term, use simple recursive fetch
+  if (!searchTerm.trim()) {
+    const params = new URLSearchParams({
+      Recursive: 'true',
+      IncludeItemTypes: 'Audio',
+      Fields: commonFields,
+      Limit: String(limit),
+      StartIndex: String(startIndex),
+    })
+
+    const response = await tryGetJson<JellyfinItemsResponse>(
+      baseUrl,
+      [`/Users/${userId}/Items?${params.toString()}`, `/API/Users/${userId}/Items?${params.toString()}`],
+      token,
+    )
+
+    return {
+      items: response.Items ?? [],
+      totalRecordCount: response.TotalRecordCount ?? 0,
+    }
   }
 
-  const response = await tryGetJson<JellyfinItemsResponse>(
+  // Enhanced search: Search for Audio, MusicArtist, and MusicAlbum matching the term
+  const searchParams = new URLSearchParams({
+    Recursive: 'true',
+    SearchTerm: searchTerm.trim(),
+    IncludeItemTypes: 'Audio,MusicArtist,MusicAlbum',
+    Fields: commonFields,
+    Limit: '100', // Limit initial search results per type
+  })
+
+  const searchResults = await tryGetJson<JellyfinItemsResponse>(
     baseUrl,
-    [
-      `/Users/${userId}/Items?${params.toString()}`,
-      `/API/Users/${userId}/Items?${params.toString()}`,
-    ],
+    [`/Users/${userId}/Items?${searchParams.toString()}`, `/API/Users/${userId}/Items?${searchParams.toString()}`],
     token,
   )
 
+  const audioItems = (searchResults.Items ?? []).filter((i) => i.Type === 'Audio')
+  const artistIds = (searchResults.Items ?? []).filter((i) => i.Type === 'MusicArtist').map((i) => i.Id)
+  const albumIds = (searchResults.Items ?? []).filter((i) => i.Type === 'MusicAlbum').map((i) => i.Id)
+
+  // If we found artists or albums, fetch their tracks too
+  if (artistIds.length > 0 || albumIds.length > 0) {
+    const extraParams = new URLSearchParams({
+      Recursive: 'true',
+      IncludeItemTypes: 'Audio',
+      Fields: commonFields,
+      Limit: '200',
+    })
+
+    if (artistIds.length > 0) {
+      extraParams.set('ArtistIds', artistIds.join(','))
+    }
+    if (albumIds.length > 0) {
+      extraParams.set('AlbumIds', albumIds.join(','))
+    }
+
+    const extraResponse = await tryGetJson<JellyfinItemsResponse>(
+      baseUrl,
+      [`/Users/${userId}/Items?${extraParams.toString()}`, `/API/Users/${userId}/Items?${extraParams.toString()}`],
+      token,
+    )
+
+    if (extraResponse.Items) {
+      for (const item of extraResponse.Items) {
+        if (!audioItems.some((existing) => existing.Id === item.Id)) {
+          audioItems.push(item)
+        }
+      }
+    }
+  }
+
   return {
-    items: response.Items ?? [],
-    totalRecordCount: response.TotalRecordCount ?? 0,
+    items: audioItems,
+    totalRecordCount: audioItems.length,
   }
 }
 

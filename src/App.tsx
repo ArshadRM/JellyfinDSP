@@ -378,10 +378,14 @@ function App() {
         query,
         fetchOptions,
       )
-      const items = shuffleItems(response.items)
+      const items = query.trim() ? response.items : shuffleItems(response.items)
       setTracks(items)
       setTotalTrackCount(response.totalRecordCount)
-      setStatus(`Loaded ${items.length} tracks from Jellyfin.`)
+      setStatus(
+        query.trim()
+          ? `Found ${items.length} matches for "${query}".`
+          : `Loaded ${items.length} tracks from Jellyfin.`,
+      )
       setSelectedTrack((prev) => {
         if (!items.length) {
           return null
@@ -955,7 +959,20 @@ function App() {
   }
 
   const trackCards = useMemo(() => {
-    return tracks.map((track) => {
+    const filtered = tracks.filter((track) => {
+      const term = search.toLowerCase().trim()
+      if (!term) {
+        return true
+      }
+
+      const matchName = track.Name.toLowerCase().includes(term)
+      const matchAlbum = track.Album?.toLowerCase().includes(term)
+      const matchArtist = track.Artists?.some((a) => a.toLowerCase().includes(term))
+
+      return matchName || matchAlbum || matchArtist
+    })
+
+    return filtered.map((track) => {
       const isActive = selectedTrack?.Id === track.Id
       const duration = formatDuration(msFromTicks(track.RunTimeTicks))
 
@@ -1013,7 +1030,7 @@ function App() {
         </motion.button>
       )
     })
-  }, [tracks, selectedTrack?.Id, serverUrl, token])
+  }, [tracks, selectedTrack?.Id, serverUrl, token, search])
 
   return (
     <>
