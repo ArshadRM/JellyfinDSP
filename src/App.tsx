@@ -1038,7 +1038,7 @@ function App() {
             <input
               type="range"
               min={60}
-              max={99}
+              max={160}
               step={1}
               value={speedPercent}
               onChange={(event) => setSpeedPercent(Number(event.target.value))}
