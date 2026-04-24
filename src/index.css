@@ -164,9 +164,20 @@ button:disabled {
 }
 
 .inline-switch {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.6rem !important;
+  cursor: pointer;
+  width: fit-content;
+  user-select: none;
+}
+
+.inline-switch input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
 .right-panel {

@@ -1,6 +1,9 @@
 services:
   jellyfindsp:
     build: .
+    volumes:
+      - .:/app
+      - /app/node_modules
     ports:
       - "26515:80"
     restart: unless-stopped

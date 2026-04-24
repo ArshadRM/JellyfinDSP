@@ -1,25 +1,25 @@
-# Build stage
-FROM node:22-alpine AS build
+# Use Node base image
+FROM node:22-alpine
+
+# Install nginx for serving the build
+RUN apk add --no-cache nginx
 
 WORKDIR /app
 
-# Copy package files and install dependencies
+# Install dependencies (cached unless package.json changes)
 COPY package*.json ./
 RUN npm install
 
-# Copy source and build
+# Copy source code (this might contain changes)
 COPY . .
-RUN npm run build
 
-# Production stage
-FROM nginx:stable-alpine
-
-# Copy built assets from build stage
-COPY --from=build /app/dist /usr/share/nginx/html
-
-# Copy custom nginx config if you need routing support
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Setup Nginx configuration
+RUN mkdir -p /run/nginx
+COPY nginx.conf /etc/nginx/http.d/default.conf
+RUN mkdir -p /var/lib/nginx/html
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+# This CMD will run every time the container starts
+# It rebuilds the app and then starts Nginx
+CMD ["sh", "-c", "npm run build && rm -rf /var/lib/nginx/html/* && cp -r dist/* /var/lib/nginx/html/ && nginx -g 'daemon off;'"]
