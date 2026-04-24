@@ -149,10 +149,21 @@ export function buildStreamUrl(
   serverUrl: string,
   itemId: string,
   token: string,
+  userId: string,
 ): string {
   const baseUrl = cleanUrl(serverUrl)
 
-  return `${baseUrl}/Audio/${itemId}/stream?api_key=${encodeURIComponent(token)}`
+  const params = new URLSearchParams({
+    UserId: userId,
+    DeviceId: APP_DEVICE_ID,
+    MaxStreamingBitrate: '320000',
+    Container: 'mp3',
+    AudioCodec: 'mp3',
+    TranscodingProtocol: 'http',
+    api_key: token,
+  })
+
+  return `${baseUrl}/Audio/${itemId}/universal?${params.toString()}`
 }
 
 export function buildImageUrl(

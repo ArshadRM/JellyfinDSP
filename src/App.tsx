@@ -55,8 +55,11 @@ function App() {
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [tracks, setTracks] = useState<JellyfinAudioItem[]>([])
   const [selectedTrack, setSelectedTrack] = useState<JellyfinAudioItem | null>(null)
+  const [masterVolume, setMasterVolume] = useState(0.85)
+  const [isSpeedEnabled, setIsSpeedEnabled] = useState(true)
   const [playbackRate, setPlaybackRate] = useState(0.8)
   const [preservePitch, setPreservePitch] = useState(true)
+  const [isLowPassEnabled, setIsLowPassEnabled] = useState(true)
   const [lowPassFrequency, setLowPassFrequency] = useState(4200)
   const [lowPassQ, setLowPassQ] = useState(1.2)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -103,9 +106,17 @@ function App() {
       return
     }
 
-    audio.playbackRate = playbackRate
-    applyPreservePitch(audio, preservePitch)
-  }, [playbackRate, preservePitch])
+    audio.playbackRate = isSpeedEnabled ? playbackRate : 1
+    applyPreservePitch(audio, isSpeedEnabled && preservePitch)
+  }, [isSpeedEnabled, playbackRate, preservePitch])
+
+  useEffect(() => {
+    engineRef.current.setMasterVolume(masterVolume)
+  }, [masterVolume])
+
+  useEffect(() => {
+    engineRef.current.setLowPassEnabled(isLowPassEnabled)
+  }, [isLowPassEnabled])
 
   useEffect(() => {
     engineRef.current.setLowPassFrequency(lowPassFrequency)
@@ -229,16 +240,20 @@ function App() {
       return
     }
 
-    const streamUrl = buildStreamUrl(serverUrl, track.Id, token)
+    const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId)
     setSelectedTrack(track)
 
+    audio.crossOrigin = 'anonymous'
     audio.src = streamUrl
-    audio.playbackRate = playbackRate
-    applyPreservePitch(audio, preservePitch)
+    audio.load()
+    audio.playbackRate = isSpeedEnabled ? playbackRate : 1
+    applyPreservePitch(audio, isSpeedEnabled && preservePitch)
 
     engineRef.current.setupForElement(audio, {
       lowPassFrequency,
       lowPassQ,
+      lowPassEnabled: isLowPassEnabled,
+      masterVolume,
     })
 
     try {
@@ -246,8 +261,12 @@ function App() {
       await audio.play()
       setIsPlaying(true)
       setStatus(`Now playing: ${track.Name}`)
-    } catch {
-      setStatus('Playback blocked until you interact with the page.')
+    } catch (error) {
+      const reason =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Unknown playback failure'
+      setStatus(`Playback failed: ${reason}`)
     }
   }
 
@@ -363,7 +382,7 @@ function App() {
       if (!preloadAudioCacheRef.current[track.Id]) {
         const preloadAudio = new Audio()
         preloadAudio.preload = 'auto'
-        preloadAudio.src = buildStreamUrl(serverUrl, track.Id, token)
+        preloadAudio.src = buildStreamUrl(serverUrl, track.Id, token, userId)
         preloadAudio.load()
         preloadAudioCacheRef.current[track.Id] = preloadAudio
       }
@@ -374,7 +393,7 @@ function App() {
       if (!preloadAudioCacheRef.current[randomTargetId]) {
         const preloadAudio = new Audio()
         preloadAudio.preload = 'auto'
-        preloadAudio.src = buildStreamUrl(serverUrl, randomTargetId, token)
+        preloadAudio.src = buildStreamUrl(serverUrl, randomTargetId, token, userId)
         preloadAudio.load()
         preloadAudioCacheRef.current[randomTargetId] = preloadAudio
       }
@@ -388,7 +407,7 @@ function App() {
       cachedAudio.removeAttribute('src')
       delete preloadAudioCacheRef.current[id]
     }
-  }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token])
+  }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token, userId])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -526,50 +545,17 @@ function App() {
         <p className="status">{status}</p>
 
         <div className="control-card">
-          <h2>DSP</h2>
+          <h2>Volume</h2>
 
           <label>
-            Speed ({playbackRate.toFixed(2)}x)
+            Global Volume ({Math.round(masterVolume * 100)}%)
             <input
               type="range"
-              min={0.6}
-              max={0.99}
+              min={0}
+              max={1}
               step={0.01}
-              value={playbackRate}
-              onChange={(event) => setPlaybackRate(Number(event.target.value))}
-            />
-          </label>
-
-          <label className="inline-switch">
-            <input
-              type="checkbox"
-              checked={preservePitch}
-              onChange={(event) => setPreservePitch(event.target.checked)}
-            />
-            Preserve pitch
-          </label>
-
-          <label>
-            Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
-            <input
-              type="range"
-              min={120}
-              max={12000}
-              step={10}
-              value={lowPassFrequency}
-              onChange={(event) => setLowPassFrequency(Number(event.target.value))}
-            />
-          </label>
-
-          <label>
-            Resonance / Q ({lowPassQ.toFixed(2)})
-            <input
-              type="range"
-              min={0.2}
-              max={12}
-              step={0.1}
-              value={lowPassQ}
-              onChange={(event) => setLowPassQ(Number(event.target.value))}
+              value={masterVolume}
+              onChange={(event) => setMasterVolume(Number(event.target.value))}
             />
           </label>
 
@@ -582,6 +568,81 @@ function App() {
           >
             {isPlaying ? 'Pause' : 'Play'}
           </button>
+        </div>
+
+        <div className="control-card">
+          <h2>Speed</h2>
+
+          <label className="inline-switch">
+            <input
+              type="checkbox"
+              checked={isSpeedEnabled}
+              onChange={(event) => setIsSpeedEnabled(event.target.checked)}
+            />
+            Enable Speed
+          </label>
+
+          <label>
+            Speed ({playbackRate.toFixed(2)}x)
+            <input
+              type="range"
+              min={0.6}
+              max={0.99}
+              step={0.01}
+              value={playbackRate}
+              onChange={(event) => setPlaybackRate(Number(event.target.value))}
+              disabled={!isSpeedEnabled}
+            />
+          </label>
+
+          <label className="inline-switch">
+            <input
+              type="checkbox"
+              checked={preservePitch}
+              onChange={(event) => setPreservePitch(event.target.checked)}
+              disabled={!isSpeedEnabled}
+            />
+            Preserve pitch
+          </label>
+        </div>
+
+        <div className="control-card">
+          <h2>Low Pass</h2>
+
+          <label className="inline-switch">
+            <input
+              type="checkbox"
+              checked={isLowPassEnabled}
+              onChange={(event) => setIsLowPassEnabled(event.target.checked)}
+            />
+            Enable Low Pass
+          </label>
+
+          <label>
+            Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
+            <input
+              type="range"
+              min={120}
+              max={12000}
+              step={10}
+              value={lowPassFrequency}
+              onChange={(event) => setLowPassFrequency(Number(event.target.value))}
+              disabled={!isLowPassEnabled}
+            />
+          </label>
+
+          <label>
+            Resonance / Q ({lowPassQ.toFixed(2)})
+            <input
+              type="range"
+              min={0.2}
+              max={12}
+              step={0.1}
+              value={lowPassQ}
+              onChange={(event) => setLowPassQ(Number(event.target.value))}
+              disabled={!isLowPassEnabled}
+            />
+          </label>
         </div>
       </section>
 
