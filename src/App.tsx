@@ -107,6 +107,7 @@ function App() {
   const scrubberPeakCacheRef = useRef<Record<string, number[] | undefined>>({})
   const scrubberPeakTasksRef = useRef<Record<string, Promise<void> | undefined>>({})
   const engineRef = useRef(new AudioEngine())
+  const lastSearchIdRef = useRef(0)
 
   async function buildSongIntensityPeaks(
     streamUrl: string,
@@ -368,6 +369,7 @@ function App() {
       return
     }
 
+    const currentSearchId = ++lastSearchIdRef.current
     setIsLoadingTracks(true)
 
     try {
@@ -378,6 +380,11 @@ function App() {
         query,
         fetchOptions,
       )
+
+      if (currentSearchId !== lastSearchIdRef.current) {
+        return
+      }
+
       const items = query.trim() ? response.items : shuffleItems(response.items)
       setTracks(items)
       setTotalTrackCount(response.totalRecordCount)
@@ -399,9 +406,13 @@ function App() {
         return stillVisible ?? items[0]
       })
     } catch (error) {
-      setStatus(`Failed to load tracks: ${(error as Error).message}`)
+      if (currentSearchId === lastSearchIdRef.current) {
+        setStatus(`Failed to load tracks: ${(error as Error).message}`)
+      }
     } finally {
-      setIsLoadingTracks(false)
+      if (currentSearchId === lastSearchIdRef.current) {
+        setIsLoadingTracks(false)
+      }
     }
   }
 
@@ -1360,7 +1371,7 @@ function App() {
                 }}
                 disabled={!isAuthenticated || totalTrackCount === 0}
               >
-                Shuffle View
+                Shuffle Carousel
               </button>
               <button
                 type="button"
