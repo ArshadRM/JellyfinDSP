@@ -67,6 +67,7 @@ function App() {
   const [randomTargetId, setRandomTargetId] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [scrubberPeaks, setScrubberPeaks] = useState<number[]>([])
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -77,6 +78,58 @@ function App() {
   const carouselWrapRef = useRef<HTMLDivElement | null>(null)
   const preloadAudioCacheRef = useRef<Record<string, HTMLAudioElement | undefined>>({})
   const engineRef = useRef(new AudioEngine())
+
+  async function buildSongIntensityPeaks(
+    streamUrl: string,
+    signal: AbortSignal,
+  ): Promise<number[]> {
+    const response = await fetch(streamUrl, { signal })
+    if (!response.ok) {
+      throw new Error(`Waveform fetch failed (${response.status})`)
+    }
+
+    const payload = await response.arrayBuffer()
+    if (signal.aborted) {
+      return []
+    }
+
+    const decodeContext = new AudioContext()
+    try {
+      const audioBuffer = await decodeContext.decodeAudioData(payload.slice(0))
+
+      const bars = 260
+      const blockSize = Math.max(1, Math.floor(audioBuffer.length / bars))
+      const peaks = new Array(bars).fill(0)
+
+      for (let bar = 0; bar < bars; bar += 1) {
+        const start = bar * blockSize
+        const end = Math.min(audioBuffer.length, start + blockSize)
+
+        let peak = 0
+
+        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+          const channelData = audioBuffer.getChannelData(channel)
+          for (let i = start; i < end; i += 1) {
+            const sample = Math.abs(channelData[i] ?? 0)
+            if (sample > peak) {
+              peak = sample
+            }
+          }
+        }
+
+        peaks[bar] = peak
+      }
+
+      const maxPeak = peaks.reduce((max, value) => Math.max(max, value), 0)
+      if (maxPeak <= 0) {
+        return peaks.map(() => 0)
+      }
+
+      return peaks.map((value) => value / maxPeak)
+    } finally {
+      await decodeContext.close()
+    }
+  }
 
   const playbackRate = speedPercent / 100
 
@@ -460,95 +513,45 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const scrubberCanvas = scrubberCanvasRef.current
-    const backgroundCanvas = backgroundWaveformRef.current
-
-    if (!scrubberCanvas || !backgroundCanvas) {
+    if (!selectedTrack || !token || !userId) {
+      setScrubberPeaks([])
       return
     }
 
-    const scrubberCtx = scrubberCanvas.getContext('2d')
-    const backgroundCtx = backgroundCanvas.getContext('2d')
+    const abortController = new AbortController()
+    const streamUrl = buildStreamUrl(serverUrl, selectedTrack.Id, token, userId)
 
-    if (!scrubberCtx || !backgroundCtx) {
+    void (async () => {
+      try {
+        const peaks = await buildSongIntensityPeaks(streamUrl, abortController.signal)
+        if (!abortController.signal.aborted) {
+          setScrubberPeaks(peaks)
+        }
+      } catch {
+        if (!abortController.signal.aborted) {
+          setScrubberPeaks([])
+        }
+      }
+    })()
+
+    return () => {
+      abortController.abort()
+    }
+  }, [selectedTrack?.Id, token, userId, serverUrl])
+
+  useEffect(() => {
+    const backgroundCanvas = backgroundWaveformRef.current
+    if (!backgroundCanvas) {
+      return
+    }
+
+    const backgroundCtx = backgroundCanvas.getContext('2d')
+    if (!backgroundCtx) {
       return
     }
 
     const waveformData = new Uint8Array(1024)
     let rafId = 0
-
-    const drawBackgroundWaveform = (
-      ctx: CanvasRenderingContext2D,
-      width: number,
-      height: number,
-      hasData: boolean,
-    ): void => {
-      ctx.clearRect(0, 0, width, height)
-
-      if (!hasData) {
-        return
-      }
-
-      ctx.strokeStyle = 'rgba(154, 176, 202, 0.24)'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-
-      for (let i = 0; i < waveformData.length; i += 1) {
-        const x = (i / (waveformData.length - 1)) * width
-        const y = (waveformData[i] / 255) * height
-
-        if (i === 0) {
-          ctx.moveTo(x, y)
-        } else {
-          ctx.lineTo(x, y)
-        }
-      }
-
-      ctx.stroke()
-    }
-
-    const drawIntensityScrubber = (
-      ctx: CanvasRenderingContext2D,
-      width: number,
-      height: number,
-      hasData: boolean,
-    ): void => {
-      ctx.fillStyle = 'rgba(8, 16, 31, 0.88)'
-      ctx.fillRect(0, 0, width, height)
-
-      if (!hasData) {
-        return
-      }
-
-      const localDuration = durationRef.current
-      const progress = localDuration > 0 ? currentTimeRef.current / localDuration : 0
-      const barCount = 150
-      const barGap = 1
-      const barWidth = Math.max(1, width / barCount - barGap)
-      const chunkSize = Math.max(1, Math.floor(waveformData.length / barCount))
-
-      for (let i = 0; i < barCount; i += 1) {
-        let peak = 0
-        const start = i * chunkSize
-        const end = Math.min(waveformData.length, start + chunkSize)
-
-        for (let j = start; j < end; j += 1) {
-          const normalized = Math.abs((waveformData[j] - 128) / 128)
-          if (normalized > peak) {
-            peak = normalized
-          }
-        }
-
-        const barHeight = Math.max(2, peak * (height - 4))
-        const x = i * (barWidth + barGap)
-        const y = (height - barHeight) / 2
-        const barProgress = i / barCount
-
-        ctx.fillStyle =
-          barProgress <= progress ? 'rgba(255, 159, 47, 0.95)' : 'rgba(214, 223, 236, 0.72)'
-        ctx.fillRect(x, y, barWidth, barHeight)
-      }
-    }
 
     const syncCanvasSize = (canvas: HTMLCanvasElement): { width: number; height: number } => {
       const width = canvas.clientWidth
@@ -563,27 +566,33 @@ function App() {
     }
 
     const draw = (): void => {
-      const scrubberSize = syncCanvasSize(scrubberCanvas)
-      const backgroundSize = syncCanvasSize(backgroundCanvas)
-
-      if (!scrubberSize.width || !scrubberSize.height) {
+      const size = syncCanvasSize(backgroundCanvas)
+      if (!size.width || !size.height) {
         rafId = requestAnimationFrame(draw)
         return
       }
 
+      backgroundCtx.clearRect(0, 0, size.width, size.height)
       const hasData = engineRef.current.getWaveformData(waveformData)
-      drawBackgroundWaveform(
-        backgroundCtx,
-        backgroundSize.width,
-        backgroundSize.height,
-        hasData,
-      )
-      drawIntensityScrubber(
-        scrubberCtx,
-        scrubberSize.width,
-        scrubberSize.height,
-        hasData,
-      )
+
+      if (hasData) {
+        backgroundCtx.strokeStyle = 'rgba(165, 186, 212, 0.18)'
+        backgroundCtx.lineWidth = 1.25
+        backgroundCtx.beginPath()
+
+        for (let i = 0; i < waveformData.length; i += 1) {
+          const x = (i / (waveformData.length - 1)) * size.width
+          const y = (waveformData[i] / 255) * size.height
+
+          if (i === 0) {
+            backgroundCtx.moveTo(x, y)
+          } else {
+            backgroundCtx.lineTo(x, y)
+          }
+        }
+
+        backgroundCtx.stroke()
+      }
 
       rafId = requestAnimationFrame(draw)
     }
@@ -594,6 +603,72 @@ function App() {
       cancelAnimationFrame(rafId)
     }
   }, [])
+
+  useEffect(() => {
+    const scrubberCanvas = scrubberCanvasRef.current
+    if (!scrubberCanvas) {
+      return
+    }
+
+    const scrubberCtx = scrubberCanvas.getContext('2d')
+    if (!scrubberCtx) {
+      return
+    }
+
+    let rafId = 0
+
+    const syncCanvasSize = (canvas: HTMLCanvasElement): { width: number; height: number } => {
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width
+        canvas.height = height
+      }
+
+      return { width, height }
+    }
+
+    const draw = (): void => {
+      const size = syncCanvasSize(scrubberCanvas)
+      if (!size.width || !size.height) {
+        rafId = requestAnimationFrame(draw)
+        return
+      }
+
+      scrubberCtx.fillStyle = 'rgba(8, 16, 31, 0.88)'
+      scrubberCtx.fillRect(0, 0, size.width, size.height)
+
+      const localDuration = durationRef.current
+      const progress = localDuration > 0 ? currentTimeRef.current / localDuration : 0
+      const peaks = scrubberPeaks.length ? scrubberPeaks : new Array(160).fill(0.18)
+      const barCount = peaks.length
+      const barGap = 1
+      const barWidth = Math.max(1, size.width / barCount - barGap)
+
+      for (let i = 0; i < barCount; i += 1) {
+        const peak = peaks[i] ?? 0
+        const barHeight = Math.max(2, peak * (size.height - 4))
+        const x = i * (barWidth + barGap)
+        const y = (size.height - barHeight) / 2
+        const barProgress = i / barCount
+
+        scrubberCtx.fillStyle =
+          barProgress <= progress
+            ? 'rgba(255, 159, 47, 0.95)'
+            : 'rgba(214, 223, 236, 0.72)'
+        scrubberCtx.fillRect(x, y, barWidth, barHeight)
+      }
+
+      rafId = requestAnimationFrame(draw)
+    }
+
+    rafId = requestAnimationFrame(draw)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+    }
+  }, [scrubberPeaks])
 
   useEffect(() => {
     if (!tracks.length) {
@@ -749,7 +824,9 @@ function App() {
   }, [tracks, selectedTrack?.Id, serverUrl, token])
 
   return (
-    <main className="shell">
+    <>
+      <canvas ref={backgroundWaveformRef} className="global-background-waveform" />
+      <main className="shell">
       <section className="panel left-panel">
         <h1>JellyfinOSU</h1>
         <p className="subhead">DayCore-style playback + low-pass tuning.</p>
@@ -893,7 +970,6 @@ function App() {
       </section>
 
       <section className="panel right-panel">
-        <canvas ref={backgroundWaveformRef} className="background-waveform" />
         <div className="playback-strip">
           <div className="playback-meta">
             <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
@@ -1000,6 +1076,7 @@ function App() {
         />
       </section>
     </main>
+    </>
   )
 }
 
