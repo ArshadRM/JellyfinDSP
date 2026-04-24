@@ -60,8 +60,8 @@ function App() {
   const [playbackRate, setPlaybackRate] = useState(0.8)
   const [preservePitch, setPreservePitch] = useState(true)
   const [isLowPassEnabled, setIsLowPassEnabled] = useState(true)
-  const [lowPassFrequency, setLowPassFrequency] = useState(4200)
-  const [lowPassQ, setLowPassQ] = useState(1.2)
+  const [lowPassFrequency, setLowPassFrequency] = useState(55)
+  const [lowPassQ, setLowPassQ] = useState(0.54)
   const [isPlaying, setIsPlaying] = useState(false)
   const [randomTargetId, setRandomTargetId] = useState<string | null>(null)
 
@@ -622,9 +622,9 @@ function App() {
             Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
             <input
               type="range"
-              min={120}
-              max={12000}
-              step={10}
+              min={10}
+              max={10000}
+              step={1}
               value={lowPassFrequency}
               onChange={(event) => setLowPassFrequency(Number(event.target.value))}
               disabled={!isLowPassEnabled}
@@ -635,8 +635,8 @@ function App() {
             Resonance / Q ({lowPassQ.toFixed(2)})
             <input
               type="range"
-              min={0.2}
-              max={12}
+              min={0.01}
+              max={10}
               step={0.1}
               value={lowPassQ}
               onChange={(event) => setLowPassQ(Number(event.target.value))}
