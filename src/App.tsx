@@ -1,5 +1,5 @@
 import { animate, motion } from 'framer-motion'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { AudioEngine } from './lib/audioEngine'
 import {
@@ -60,8 +60,11 @@ function App() {
   const [lowPassFrequency, setLowPassFrequency] = useState(4200)
   const [lowPassQ, setLowPassQ] = useState(1.2)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [randomTargetId, setRandomTargetId] = useState<string | null>(null)
 
   const audioRef = useRef<HTMLAudioElement>(null)
+  const activeCardRef = useRef<HTMLButtonElement | null>(null)
+  const preloadAudioCacheRef = useRef<Record<string, HTMLAudioElement | undefined>>({})
   const engineRef = useRef(new AudioEngine())
 
   const isAuthenticated = token.length > 0 && userId.length > 0
@@ -118,20 +121,49 @@ function App() {
     }
   }, [])
 
-  async function loadTracks(query = ''): Promise<void> {
-    if (!isAuthenticated) {
+  function clearPreloadCache(): void {
+    const entries = Object.entries(preloadAudioCacheRef.current)
+
+    for (const [, cachedAudio] of entries) {
+      if (!cachedAudio) {
+        continue
+      }
+      cachedAudio.pause()
+      cachedAudio.removeAttribute('src')
+    }
+
+    preloadAudioCacheRef.current = {}
+  }
+
+  async function loadTracks(
+    query = '',
+    authOverride?: { token: string; userId: string },
+  ): Promise<void> {
+    const activeToken = authOverride?.token ?? token
+    const activeUserId = authOverride?.userId ?? userId
+
+    if (!activeToken || !activeUserId) {
       return
     }
 
     setIsLoadingTracks(true)
 
     try {
-      const items = await fetchAudioLibrary(serverUrl, userId, token, query)
+      const items = await fetchAudioLibrary(serverUrl, activeUserId, activeToken, query)
       setTracks(items)
       setStatus(`Loaded ${items.length} tracks from Jellyfin.`)
-      if (!selectedTrack && items[0]) {
-        setSelectedTrack(items[0])
-      }
+      setSelectedTrack((prev) => {
+        if (!items.length) {
+          return null
+        }
+
+        if (!prev) {
+          return items[0]
+        }
+
+        const stillVisible = items.find((item) => item.Id === prev.Id)
+        return stillVisible ?? items[0]
+      })
     } catch (error) {
       setStatus(`Failed to load tracks: ${(error as Error).message}`)
     } finally {
@@ -160,7 +192,10 @@ function App() {
       setToken(result.AccessToken)
       setUserId(result.User.Id)
       setStatus(`Welcome ${result.User.Name}. Loading tracks...`)
-      await loadTracks(search)
+      await loadTracks(search, {
+        token: result.AccessToken,
+        userId: result.User.Id,
+      })
     } catch (error) {
       setStatus(`Authentication failed: ${(error as Error).message}`)
       setToken('')
@@ -173,8 +208,10 @@ function App() {
     setUserId('')
     setTracks([])
     setSelectedTrack(null)
+    setRandomTargetId(null)
     setIsPlaying(false)
     localStorage.removeItem(STORAGE_KEY)
+    clearPreloadCache()
 
     const audio = audioRef.current
     if (audio) {
@@ -214,6 +251,173 @@ function App() {
     }
   }
 
+  function getSelectedIndex(): number {
+    if (!selectedTrack) {
+      return -1
+    }
+
+    return tracks.findIndex((track) => track.Id === selectedTrack.Id)
+  }
+
+  async function playTrackAtIndex(index: number): Promise<void> {
+    if (index < 0 || index >= tracks.length) {
+      return
+    }
+
+    await handleSelectTrack(tracks[index])
+  }
+
+  async function handlePrevTrack(): Promise<void> {
+    const currentIndex = getSelectedIndex()
+    if (currentIndex <= 0) {
+      return
+    }
+
+    await playTrackAtIndex(currentIndex - 1)
+  }
+
+  async function handleNextTrack(): Promise<void> {
+    const currentIndex = getSelectedIndex()
+    if (currentIndex < 0 || currentIndex >= tracks.length - 1) {
+      return
+    }
+
+    await playTrackAtIndex(currentIndex + 1)
+  }
+
+  async function handleRandomJump(): Promise<void> {
+    if (!tracks.length) {
+      return
+    }
+
+    const randomTrack =
+      (randomTargetId && tracks.find((track) => track.Id === randomTargetId)) ||
+      tracks[Math.floor(Math.random() * tracks.length)]
+
+    if (!randomTrack) {
+      return
+    }
+
+    await handleSelectTrack(randomTrack)
+  }
+
+  async function handleTrackEnded(): Promise<void> {
+    const currentIndex = getSelectedIndex()
+    if (currentIndex < 0) {
+      return
+    }
+
+    const nextIndex = currentIndex + 1
+    if (nextIndex >= tracks.length) {
+      setIsPlaying(false)
+      setStatus('Reached end of current list.')
+      return
+    }
+
+    await playTrackAtIndex(nextIndex)
+  }
+
+  useLayoutEffect(() => {
+    activeCardRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+  }, [selectedTrack?.Id])
+
+  useEffect(() => {
+    if (!tracks.length) {
+      setRandomTargetId(null)
+      return
+    }
+
+    const pool = tracks.filter((track) => track.Id !== selectedTrack?.Id)
+    if (!pool.length) {
+      setRandomTargetId(null)
+      return
+    }
+
+    const candidate = pool[Math.floor(Math.random() * pool.length)]
+    setRandomTargetId(candidate.Id)
+  }, [selectedTrack?.Id, tracks])
+
+  useEffect(() => {
+    if (!token || !selectedTrack || !tracks.length) {
+      return
+    }
+
+    const currentIndex = tracks.findIndex((track) => track.Id === selectedTrack.Id)
+    if (currentIndex < 0) {
+      return
+    }
+
+    const keepIds = new Set<string>()
+
+    for (let offset = -2; offset <= 2; offset += 1) {
+      const track = tracks[currentIndex + offset]
+      if (!track) {
+        continue
+      }
+
+      keepIds.add(track.Id)
+
+      if (!preloadAudioCacheRef.current[track.Id]) {
+        const preloadAudio = new Audio()
+        preloadAudio.preload = 'auto'
+        preloadAudio.src = buildStreamUrl(serverUrl, track.Id, token)
+        preloadAudio.load()
+        preloadAudioCacheRef.current[track.Id] = preloadAudio
+      }
+    }
+
+    if (randomTargetId) {
+      keepIds.add(randomTargetId)
+      if (!preloadAudioCacheRef.current[randomTargetId]) {
+        const preloadAudio = new Audio()
+        preloadAudio.preload = 'auto'
+        preloadAudio.src = buildStreamUrl(serverUrl, randomTargetId, token)
+        preloadAudio.load()
+        preloadAudioCacheRef.current[randomTargetId] = preloadAudio
+      }
+    }
+
+    for (const [id, cachedAudio] of Object.entries(preloadAudioCacheRef.current)) {
+      if (keepIds.has(id) || !cachedAudio) {
+        continue
+      }
+      cachedAudio.pause()
+      cachedAudio.removeAttribute('src')
+      delete preloadAudioCacheRef.current[id]
+    }
+  }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      const target = event.target as HTMLElement | null
+      const isTypingTarget =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+
+      if (isTypingTarget) {
+        return
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        void handlePrevTrack()
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        void handleNextTrack()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [selectedTrack, tracks])
+
   async function togglePlayback(): Promise<void> {
     const audio = audioRef.current
     if (!audio || !selectedTrack) {
@@ -245,6 +449,7 @@ function App() {
           type="button"
           key={track.Id}
           className={`track-card ${isActive ? 'active' : ''}`}
+          ref={isActive ? activeCardRef : null}
           onClick={() => {
             void handleSelectTrack(track)
           }}
@@ -383,12 +588,44 @@ function App() {
       <section className="panel right-panel">
         <header className="library-head">
           <h2>Library Carousel</h2>
-          <input
-            placeholder="Search tracks"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            disabled={!isAuthenticated}
-          />
+          <div className="library-actions">
+            <button
+              type="button"
+              className="ghost nav-btn"
+              onClick={() => {
+                void handlePrevTrack()
+              }}
+              disabled={!selectedTrack || getSelectedIndex() <= 0}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              className="ghost nav-btn"
+              onClick={() => {
+                void handleRandomJump()
+              }}
+              disabled={!selectedTrack || tracks.length < 2}
+            >
+              Random Jump
+            </button>
+            <button
+              type="button"
+              className="ghost nav-btn"
+              onClick={() => {
+                void handleNextTrack()
+              }}
+              disabled={!selectedTrack || getSelectedIndex() >= tracks.length - 1}
+            >
+              Next
+            </button>
+            <input
+              placeholder="Search tracks"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              disabled={!isAuthenticated}
+            />
+          </div>
         </header>
 
         <div className="carousel-wrap">
@@ -417,10 +654,12 @@ function App() {
 
         <audio
           ref={audioRef}
-          controls
           className="native-player"
           onPause={() => setIsPlaying(false)}
           onPlay={() => setIsPlaying(true)}
+          onEnded={() => {
+            void handleTrackEnded()
+          }}
         />
       </section>
     </main>
