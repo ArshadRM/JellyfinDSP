@@ -1,6 +1,6 @@
 import { animate, motion } from 'framer-motion'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { AudioEngine } from './lib/audioEngine'
 import {
   authenticate,
@@ -69,10 +69,12 @@ function App() {
   const [duration, setDuration] = useState(0)
 
   const audioRef = useRef<HTMLAudioElement>(null)
-  const waveformCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const backgroundWaveformRef = useRef<HTMLCanvasElement | null>(null)
   const currentTimeRef = useRef(0)
   const durationRef = useRef(0)
   const activeCardRef = useRef<HTMLButtonElement | null>(null)
+  const carouselWrapRef = useRef<HTMLDivElement | null>(null)
   const preloadAudioCacheRef = useRef<Record<string, HTMLAudioElement | undefined>>({})
   const engineRef = useRef(new AudioEngine())
 
@@ -388,12 +390,49 @@ function App() {
     await playTrackAtIndex(nextIndex)
   }
 
-  useLayoutEffect(() => {
-    activeCardRef.current?.scrollIntoView({
+  function scrubFromPointer(event: ReactMouseEvent<HTMLCanvasElement>): void {
+    if (!selectedTrack || duration <= 0) {
+      return
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (!rect.width) {
+      return
+    }
+
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+    handleScrub(ratio * duration)
+  }
+
+  function centerSelectedCard(): void {
+    const card = activeCardRef.current
+    const wrap = carouselWrapRef.current
+
+    if (!card || !wrap) {
+      return
+    }
+
+    const cardRect = card.getBoundingClientRect()
+    const wrapRect = wrap.getBoundingClientRect()
+    const cardCenter = cardRect.top + cardRect.height / 2
+    const wrapCenter = wrapRect.top + wrapRect.height / 2
+    const delta = cardCenter - wrapCenter
+
+    wrap.scrollTo({
+      top: wrap.scrollTop + delta,
       behavior: 'smooth',
-      block: 'center',
     })
-  }, [selectedTrack?.Id])
+  }
+
+  useLayoutEffect(() => {
+    const rafId = requestAnimationFrame(() => {
+      centerSelectedCard()
+    })
+
+    return () => {
+      cancelAnimationFrame(rafId)
+    }
+  }, [selectedTrack?.Id, tracks])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -421,63 +460,130 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const canvas = waveformCanvasRef.current
-    if (!canvas) {
+    const scrubberCanvas = scrubberCanvasRef.current
+    const backgroundCanvas = backgroundWaveformRef.current
+
+    if (!scrubberCanvas || !backgroundCanvas) {
       return
     }
 
-    const context = canvas.getContext('2d')
-    if (!context) {
+    const scrubberCtx = scrubberCanvas.getContext('2d')
+    const backgroundCtx = backgroundCanvas.getContext('2d')
+
+    if (!scrubberCtx || !backgroundCtx) {
       return
     }
 
     const waveformData = new Uint8Array(1024)
     let rafId = 0
 
-    const draw = (): void => {
-      const width = canvas.clientWidth
-      const height = canvas.clientHeight
+    const drawBackgroundWaveform = (
+      ctx: CanvasRenderingContext2D,
+      width: number,
+      height: number,
+      hasData: boolean,
+    ): void => {
+      ctx.clearRect(0, 0, width, height)
 
-      if (!width || !height) {
-        rafId = requestAnimationFrame(draw)
+      if (!hasData) {
         return
       }
+
+      ctx.strokeStyle = 'rgba(154, 176, 202, 0.24)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+
+      for (let i = 0; i < waveformData.length; i += 1) {
+        const x = (i / (waveformData.length - 1)) * width
+        const y = (waveformData[i] / 255) * height
+
+        if (i === 0) {
+          ctx.moveTo(x, y)
+        } else {
+          ctx.lineTo(x, y)
+        }
+      }
+
+      ctx.stroke()
+    }
+
+    const drawIntensityScrubber = (
+      ctx: CanvasRenderingContext2D,
+      width: number,
+      height: number,
+      hasData: boolean,
+    ): void => {
+      ctx.fillStyle = 'rgba(8, 16, 31, 0.88)'
+      ctx.fillRect(0, 0, width, height)
+
+      if (!hasData) {
+        return
+      }
+
+      const localDuration = durationRef.current
+      const progress = localDuration > 0 ? currentTimeRef.current / localDuration : 0
+      const barCount = 150
+      const barGap = 1
+      const barWidth = Math.max(1, width / barCount - barGap)
+      const chunkSize = Math.max(1, Math.floor(waveformData.length / barCount))
+
+      for (let i = 0; i < barCount; i += 1) {
+        let peak = 0
+        const start = i * chunkSize
+        const end = Math.min(waveformData.length, start + chunkSize)
+
+        for (let j = start; j < end; j += 1) {
+          const normalized = Math.abs((waveformData[j] - 128) / 128)
+          if (normalized > peak) {
+            peak = normalized
+          }
+        }
+
+        const barHeight = Math.max(2, peak * (height - 4))
+        const x = i * (barWidth + barGap)
+        const y = (height - barHeight) / 2
+        const barProgress = i / barCount
+
+        ctx.fillStyle =
+          barProgress <= progress ? 'rgba(255, 159, 47, 0.95)' : 'rgba(214, 223, 236, 0.72)'
+        ctx.fillRect(x, y, barWidth, barHeight)
+      }
+    }
+
+    const syncCanvasSize = (canvas: HTMLCanvasElement): { width: number; height: number } => {
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
 
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width
         canvas.height = height
       }
 
-      context.fillStyle = 'rgba(8, 16, 31, 0.88)'
-      context.fillRect(0, 0, width, height)
+      return { width, height }
+    }
 
-      const hasData = engineRef.current.getWaveformData(waveformData)
-      context.strokeStyle = '#ff9f2f'
-      context.lineWidth = 2
-      context.beginPath()
+    const draw = (): void => {
+      const scrubberSize = syncCanvasSize(scrubberCanvas)
+      const backgroundSize = syncCanvasSize(backgroundCanvas)
 
-      if (hasData) {
-        for (let i = 0; i < waveformData.length; i += 1) {
-          const x = (i / (waveformData.length - 1)) * width
-          const y = (waveformData[i] / 255) * height
-
-          if (i === 0) {
-            context.moveTo(x, y)
-          } else {
-            context.lineTo(x, y)
-          }
-        }
-      } else {
-        context.moveTo(0, height / 2)
-        context.lineTo(width, height / 2)
+      if (!scrubberSize.width || !scrubberSize.height) {
+        rafId = requestAnimationFrame(draw)
+        return
       }
 
-      context.stroke()
-
-      const localDuration = durationRef.current
-      const progress = localDuration > 0 ? currentTimeRef.current / localDuration : 0
-      context.fillStyle = 'rgba(255, 109, 42, 0.22)'
-      context.fillRect(0, 0, width * progress, height)
+      const hasData = engineRef.current.getWaveformData(waveformData)
+      drawBackgroundWaveform(
+        backgroundCtx,
+        backgroundSize.width,
+        backgroundSize.height,
+        hasData,
+      )
+      drawIntensityScrubber(
+        scrubberCtx,
+        scrubberSize.width,
+        scrubberSize.height,
+        hasData,
+      )
 
       rafId = requestAnimationFrame(draw)
     }
@@ -718,13 +824,13 @@ function App() {
 
         <div className="control-card">
           <div className="menu-head">
+            <h2>Speed</h2>
             <button
               type="button"
               onClick={() => setIsSpeedEnabled((prev) => !prev)}
             >
               {isSpeedEnabled ? 'Speed On' : 'Speed Off'}
             </button>
-            <h2>Speed</h2>
           </div>
 
           <label>
@@ -736,7 +842,6 @@ function App() {
               step={1}
               value={speedPercent}
               onChange={(event) => setSpeedPercent(Number(event.target.value))}
-              disabled={!isSpeedEnabled}
             />
           </label>
 
@@ -745,7 +850,6 @@ function App() {
               type="checkbox"
               checked={preservePitch}
               onChange={(event) => setPreservePitch(event.target.checked)}
-              disabled={!isSpeedEnabled}
             />
             Preserve pitch
           </label>
@@ -753,13 +857,13 @@ function App() {
 
         <div className="control-card">
           <div className="menu-head">
+            <h2>Low Pass</h2>
             <button
               type="button"
               onClick={() => setIsLowPassEnabled((prev) => !prev)}
             >
               {isLowPassEnabled ? 'Low Pass On' : 'Low Pass Off'}
             </button>
-            <h2>Low Pass</h2>
           </div>
 
           <label>
@@ -771,7 +875,6 @@ function App() {
               step={1}
               value={lowPassFrequency}
               onChange={(event) => setLowPassFrequency(Number(event.target.value))}
-              disabled={!isLowPassEnabled}
             />
           </label>
 
@@ -781,16 +884,16 @@ function App() {
               type="range"
               min={0.01}
               max={10}
-              step={1}
+              step={0.01}
               value={lowPassQ}
               onChange={(event) => setLowPassQ(Number(event.target.value))}
-              disabled={!isLowPassEnabled}
             />
           </label>
         </div>
       </section>
 
       <section className="panel right-panel">
+        <canvas ref={backgroundWaveformRef} className="background-waveform" />
         <div className="playback-strip">
           <div className="playback-meta">
             <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
@@ -798,16 +901,15 @@ function App() {
               {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
             </span>
           </div>
-          <canvas ref={waveformCanvasRef} className="waveform-canvas" />
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0, duration)}
-            step={1}
-            value={Math.min(currentTime, Math.max(0, duration))}
-            onChange={(event) => handleScrub(Number(event.target.value))}
-            disabled={!selectedTrack || duration <= 0}
-            className="scrub-slider"
+          <canvas
+            ref={scrubberCanvasRef}
+            className="waveform-canvas"
+            onMouseDown={scrubFromPointer}
+            onMouseMove={(event) => {
+              if (event.buttons === 1) {
+                scrubFromPointer(event)
+              }
+            }}
           />
         </div>
 

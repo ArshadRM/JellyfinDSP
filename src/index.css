@@ -158,6 +158,7 @@ button:disabled {
 }
 
 .right-panel {
+  position: relative;
   padding: 1rem;
   height: calc(100vh - 2rem);
   max-height: calc(100vh - 2rem);
@@ -165,6 +166,21 @@ button:disabled {
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0.8rem;
   overflow: hidden;
+}
+
+.right-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.background-waveform {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.65;
+  pointer-events: none;
 }
 
 .playback-strip {
@@ -191,6 +207,7 @@ button:disabled {
   height: 78px;
   border-radius: 10px;
   border: 1px solid rgba(149, 173, 206, 0.28);
+  cursor: pointer;
 }
 
 .scrub-slider {
@@ -200,7 +217,8 @@ button:disabled {
 .menu-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  justify-content: space-between;
+  gap: 0.4rem;
 }
 
 .library-head {
