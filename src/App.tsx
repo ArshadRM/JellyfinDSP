@@ -72,11 +72,17 @@ function App() {
   const [masterVolume, setMasterVolume] = useState(0.85)
   const [isSpeedEnabled, setIsSpeedEnabled] = useState(true)
   const [speedPercent, setSpeedPercent] = useState(80)
-  const [adjustPitch, setAdjustPitch] = useState(false)
+  const [adjustPitch, setAdjustPitch] = useState(true)
   const [isLowPassEnabled, setIsLowPassEnabled] = useState(true)
   const [lowPassFrequency, setLowPassFrequency] = useState(55)
   const [lowPassQ, setLowPassQ] = useState(0.80)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isPhaserEnabled, setIsPhaserEnabled] = useState(false)
+  const [phaserMinFreq, setPhaserMinFreq] = useState(440)
+  const [phaserMaxFreq, setPhaserMaxFreq] = useState(1600)
+  const [phaserRate, setPhaserRate] = useState(0.5)
+  const [phaserDepth, setPhaserDepth] = useState(1.0)
+  const [phaserFeedback, setPhaserFeedback] = useState(0.7)
   const [randomTargetId, setRandomTargetId] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -282,6 +288,21 @@ function App() {
   }, [lowPassQ])
 
   useEffect(() => {
+    engineRef.current.setPhaserEnabled(isPhaserEnabled)
+  }, [isPhaserEnabled])
+
+  useEffect(() => {
+    engineRef.current.setPhaserParams({
+      phaserMinFreq,
+      phaserMaxFreq,
+      phaserRate,
+      phaserDepth,
+      phaserFeedback,
+    })
+  }, [phaserMinFreq, phaserMaxFreq, phaserRate, phaserDepth, phaserFeedback])
+
+
+  useEffect(() => {
     return () => {
       engineRef.current.disconnect()
       clearBufferedTrackCache()
@@ -467,12 +488,19 @@ function App() {
     audio.playbackRate = effectiveRate
     applyPreservePitch(audio, tempoMultiplier !== 1)
 
-    engineRef.current.setupForElement(audio, {
+    await engineRef.current.setupForElement(audio, {
       lowPassFrequency,
       lowPassQ,
       lowPassEnabled: isLowPassEnabled,
       masterVolume,
+      phaserEnabled: isPhaserEnabled,
+      phaserMinFreq,
+      phaserMaxFreq,
+      phaserRate,
+      phaserDepth,
+      phaserFeedback,
     })
+
 
     try {
       await engineRef.current.resume()
@@ -950,255 +978,327 @@ function App() {
     <>
       <canvas ref={backgroundWaveformRef} className="global-background-waveform" />
       <main className="shell">
-      <section className="panel left-panel">
-        <h1>JellyfinOSU</h1>
-        <p className="subhead">DayCore-style playback + low-pass tuning.</p>
+        <section className="panel left-panel">
+          <h1>JellyfinOSU</h1>
+          <p className="subhead">DayCore-style playback + low-pass tuning.</p>
 
-        <form className="auth-form" onSubmit={handleLogin}>
-          <label>
-            Jellyfin URL
-            <input
-              value={serverUrl}
-              onChange={(event) => setServerUrl(event.target.value)}
-              placeholder="https://watch.prnt.ink"
-              required
-            />
-          </label>
-          <label>
-            Username
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </label>
-          <div className="auth-actions">
-            <button type="submit">Connect</button>
+          <form className="auth-form" onSubmit={handleLogin}>
+            <label>
+              Jellyfin URL
+              <input
+                value={serverUrl}
+                onChange={(event) => setServerUrl(event.target.value)}
+                placeholder="https://watch.prnt.ink"
+                required
+              />
+            </label>
+            <label>
+              Username
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </label>
+            <div className="auth-actions">
+              <button type="submit">Connect</button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleLogout}
+                disabled={!isAuthenticated}
+              >
+                Logout
+              </button>
+            </div>
+          </form>
+
+          <p className="status">{status}</p>
+
+          <div className="control-card">
+            <h2>Volume</h2>
+
+            <label>
+              Global Volume ({Math.round(masterVolume * 100)}%)
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={masterVolume}
+                onChange={(event) => setMasterVolume(Number(event.target.value))}
+              />
+            </label>
+
             <button
               type="button"
-              className="ghost"
-              onClick={handleLogout}
-              disabled={!isAuthenticated}
+              onClick={() => {
+                void togglePlayback()
+              }}
+              disabled={!selectedTrack}
             >
-              Logout
-            </button>
-          </div>
-        </form>
-
-        <p className="status">{status}</p>
-
-        <div className="control-card">
-          <h2>Volume</h2>
-
-          <label>
-            Global Volume ({Math.round(masterVolume * 100)}%)
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={masterVolume}
-              onChange={(event) => setMasterVolume(Number(event.target.value))}
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={() => {
-              void togglePlayback()
-            }}
-            disabled={!selectedTrack}
-          >
-            {isPlaying ? 'Pause' : 'Play'}
-          </button>
-        </div>
-
-        <div className="control-card">
-          <div className="menu-head">
-            <h2>Speed</h2>
-            <button
-              type="button"
-              onClick={() => setIsSpeedEnabled((prev) => !prev)}
-            >
-              {isSpeedEnabled ? 'Speed On' : 'Speed Off'}
+              {isPlaying ? 'Pause' : 'Play'}
             </button>
           </div>
 
-          <label>
-            Speed ({speedPercent}%)
-            <input
-              type="range"
-              min={60}
-              max={160}
-              step={1}
-              value={speedPercent}
-              onChange={(event) => setSpeedPercent(Number(event.target.value))}
-            />
-          </label>
+          <div className="control-card">
+            <div className="menu-head">
+              <h2>Speed</h2>
+              <button
+                type="button"
+                onClick={() => setIsSpeedEnabled((prev) => !prev)}
+              >
+                {isSpeedEnabled ? 'Speed On' : 'Speed Off'}
+              </button>
+            </div>
 
-          <label className="inline-switch">
-            <input
-              type="checkbox"
-              checked={adjustPitch}
-              onChange={(event) => setAdjustPitch(event.target.checked)}
-            />
-            Adjust Pitch
-          </label>
-        </div>
+            <label>
+              Speed ({speedPercent}%)
+              <input
+                type="range"
+                min={60}
+                max={160}
+                step={1}
+                value={speedPercent}
+                onChange={(event) => setSpeedPercent(Number(event.target.value))}
+              />
+            </label>
 
-        <div className="control-card">
-          <div className="menu-head">
-            <h2>Low Pass</h2>
-            <button
-              type="button"
-              onClick={() => setIsLowPassEnabled((prev) => !prev)}
-            >
-              {isLowPassEnabled ? 'Low Pass On' : 'Low Pass Off'}
-            </button>
+            <label className="inline-switch">
+              <input
+                type="checkbox"
+                checked={adjustPitch}
+                onChange={(event) => setAdjustPitch(event.target.checked)}
+              />
+              Adjust Pitch
+            </label>
           </div>
 
-          <label>
-            Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
-            <input
-              type="range"
-              min={10}
-              max={10000}
-              step={1}
-              value={lowPassFrequency}
-              onChange={(event) => setLowPassFrequency(Number(event.target.value))}
-            />
-          </label>
+          <div className="control-card">
+            <div className="menu-head">
+              <h2>Low Pass</h2>
+              <button
+                type="button"
+                onClick={() => setIsLowPassEnabled((prev) => !prev)}
+              >
+                {isLowPassEnabled ? 'Low Pass On' : 'Low Pass Off'}
+              </button>
+            </div>
 
-          <label>
-            Resonance / Q ({lowPassQ.toFixed(2)})
-            <input
-              type="range"
-              min={0.01}
-              max={5}
-              step={0.01}
-              value={lowPassQ}
-              onChange={(event) => setLowPassQ(Number(event.target.value))}
-            />
-          </label>
-        </div>
-      </section>
+            <label>
+              Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
+              <input
+                type="range"
+                min={10}
+                max={10000}
+                step={1}
+                value={lowPassFrequency}
+                onChange={(event) => setLowPassFrequency(Number(event.target.value))}
+              />
+            </label>
 
-      <section className="panel right-panel">
-        <div className="playback-strip">
-          <div className="playback-meta">
-            <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
-            <span>
-              {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
-            </span>
+            <label>
+              Resonance / Q ({lowPassQ.toFixed(2)})
+              <input
+                type="range"
+                min={0.01}
+                max={5}
+                step={0.01}
+                value={lowPassQ}
+                onChange={(event) => setLowPassQ(Number(event.target.value))}
+              />
+            </label>
           </div>
-          <canvas
-            ref={scrubberCanvasRef}
-            className="waveform-canvas"
-            onMouseDown={scrubFromPointer}
-            onMouseMove={(event) => {
-              if (event.buttons === 1) {
-                scrubFromPointer(event)
-              }
+
+          <div className="control-card">
+            <div className="menu-head">
+              <h2>Phase Shifter</h2>
+              <button
+                type="button"
+                onClick={() => setIsPhaserEnabled((prev) => !prev)}
+              >
+                {isPhaserEnabled ? 'Phaser On' : 'Phaser Off'}
+              </button>
+            </div>
+
+            <label>
+              Min Frequency ({Math.round(phaserMinFreq)} Hz)
+              <input
+                type="range"
+                min={10}
+                max={20000}
+                step={1}
+                value={phaserMinFreq}
+                onChange={(event) => setPhaserMinFreq(Number(event.target.value))}
+              />
+            </label>
+
+            <label>
+              Max Frequency ({Math.round(phaserMaxFreq)} Hz)
+              <input
+                type="range"
+                min={10}
+                max={20000}
+                step={1}
+                value={phaserMaxFreq}
+                onChange={(event) => setPhaserMaxFreq(Number(event.target.value))}
+              />
+            </label>
+
+            <label>
+              Rate ({phaserRate.toFixed(2)} Hz)
+              <input
+                type="range"
+                min={0}
+                max={10}
+                step={0.01}
+                value={phaserRate}
+                onChange={(event) => setPhaserRate(Number(event.target.value))}
+              />
+            </label>
+
+            <label>
+              Depth ({Math.round(phaserDepth * 100)}%)
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={phaserDepth}
+                onChange={(event) => setPhaserDepth(Number(event.target.value))}
+              />
+            </label>
+
+            <label>
+              Feedback ({Math.round(phaserFeedback * 100)}%)
+              <input
+                type="range"
+                min={0}
+                max={0.99}
+                step={0.01}
+                value={phaserFeedback}
+                onChange={(event) => setPhaserFeedback(Number(event.target.value))}
+              />
+            </label>
+          </div>
+        </section>
+
+        <section className="panel right-panel">
+          <div className="playback-strip">
+            <div className="playback-meta">
+              <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
+              <span>
+                {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
+              </span>
+            </div>
+            <canvas
+              ref={scrubberCanvasRef}
+              className="waveform-canvas"
+              onMouseDown={scrubFromPointer}
+              onMouseMove={(event) => {
+                if (event.buttons === 1) {
+                  scrubFromPointer(event)
+                }
+              }}
+            />
+          </div>
+
+          <header className="library-head">
+            <h2>Library Carousel</h2>
+            <div className="library-actions">
+              <button
+                type="button"
+                className="ghost nav-btn"
+                onClick={() => {
+                  void handleShuffleView()
+                }}
+                disabled={!isAuthenticated || totalTrackCount === 0}
+              >
+                Shuffle View
+              </button>
+              <button
+                type="button"
+                className="ghost nav-btn"
+                onClick={() => {
+                  void handlePrevTrack()
+                }}
+                disabled={!selectedTrack || getSelectedIndex() <= 0}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                className="ghost nav-btn"
+                onClick={() => {
+                  void handleRandomJump()
+                }}
+                disabled={!selectedTrack || tracks.length < 2}
+              >
+                Random Jump
+              </button>
+              <button
+                type="button"
+                className="ghost nav-btn"
+                onClick={() => {
+                  void handleNextTrack()
+                }}
+                disabled={!selectedTrack || getSelectedIndex() >= tracks.length - 1}
+              >
+                Next
+              </button>
+              <input
+                placeholder="Search tracks"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                disabled={!isAuthenticated}
+              />
+            </div>
+          </header>
+
+          <div className="carousel-wrap">
+            {isLoadingTracks ? (
+              <div className="empty-state">Loading tracks...</div>
+            ) : tracks.length === 0 ? (
+              <div className="empty-state">No tracks loaded yet.</div>
+            ) : (
+              <motion.div
+                className="carousel"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                ref={(node) => {
+                  if (!node) {
+                    return
+                  }
+
+                  animate(node, { opacity: 1 }, { duration: 0.2 })
+                }}
+              >
+                {trackCards}
+              </motion.div>
+            )}
+          </div>
+
+          <audio
+            ref={audioRef}
+            className="native-player"
+            onPause={() => setIsPlaying(false)}
+            onPlay={() => setIsPlaying(true)}
+            onEnded={() => {
+              void handleTrackEnded()
             }}
           />
-        </div>
-
-        <header className="library-head">
-          <h2>Library Carousel</h2>
-          <div className="library-actions">
-            <button
-              type="button"
-              className="ghost nav-btn"
-              onClick={() => {
-                void handleShuffleView()
-              }}
-              disabled={!isAuthenticated || totalTrackCount === 0}
-            >
-              Shuffle View
-            </button>
-            <button
-              type="button"
-              className="ghost nav-btn"
-              onClick={() => {
-                void handlePrevTrack()
-              }}
-              disabled={!selectedTrack || getSelectedIndex() <= 0}
-            >
-              Prev
-            </button>
-            <button
-              type="button"
-              className="ghost nav-btn"
-              onClick={() => {
-                void handleRandomJump()
-              }}
-              disabled={!selectedTrack || tracks.length < 2}
-            >
-              Random Jump
-            </button>
-            <button
-              type="button"
-              className="ghost nav-btn"
-              onClick={() => {
-                void handleNextTrack()
-              }}
-              disabled={!selectedTrack || getSelectedIndex() >= tracks.length - 1}
-            >
-              Next
-            </button>
-            <input
-              placeholder="Search tracks"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              disabled={!isAuthenticated}
-            />
-          </div>
-        </header>
-
-        <div className="carousel-wrap">
-          {isLoadingTracks ? (
-            <div className="empty-state">Loading tracks...</div>
-          ) : tracks.length === 0 ? (
-            <div className="empty-state">No tracks loaded yet.</div>
-          ) : (
-            <motion.div
-              className="carousel"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-              ref={(node) => {
-                if (!node) {
-                  return
-                }
-
-                animate(node, { opacity: 1 }, { duration: 0.2 })
-              }}
-            >
-              {trackCards}
-            </motion.div>
-          )}
-        </div>
-
-        <audio
-          ref={audioRef}
-          className="native-player"
-          onPause={() => setIsPlaying(false)}
-          onPlay={() => setIsPlaying(true)}
-          onEnded={() => {
-            void handleTrackEnded()
-          }}
-        />
-      </section>
-    </main>
+        </section>
+      </main>
     </>
   )
 }

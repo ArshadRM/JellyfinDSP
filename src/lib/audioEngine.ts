@@ -3,7 +3,152 @@ type EngineOptions = {
   lowPassQ: number
   lowPassEnabled: boolean
   masterVolume: number
+  phaserEnabled: boolean
+  phaserMinFreq: number
+  phaserMaxFreq: number
+  phaserRate: number
+  phaserDepth: number
+  phaserFeedback: number
 }
+
+const PHASER_WORKLET_CODE = `
+class AllPassDelay {
+  constructor() {
+    this.a1 = 0;
+    this.zm1 = 0;
+  }
+  setDelay(delay) {
+    this.a1 = (1 - delay) / (1 + delay);
+  }
+  process(sample) {
+    let y = sample * -this.a1 + this.zm1;
+    this.zm1 = y * this.a1 + sample;
+    return y;
+  }
+}
+
+class Phaser {
+  constructor(sampleRate) {
+    this.fb = 0.70;
+    this.lfoPhase = 0;
+    this.depth = 1.00;
+    this.zm1 = 0;
+    this.lfoInc = 0;
+    this.dmin = 0;
+    this.dmax = 0;
+    this.sampleRate = sampleRate;
+    this.alps = Array.from({ length: 6 }, () => new AllPassDelay());
+  }
+
+  setRange(min, max) {
+    const nyquist = this.sampleRate / 2;
+    this.dmin = min / nyquist;
+    this.dmax = Math.min(max, nyquist * 0.99) / nyquist;
+  }
+
+  setRate(rate) {
+    this.lfoInc = 2 * Math.PI * (rate / this.sampleRate);
+  }
+
+  setFeedback(fb) {
+    this.fb = fb;
+  }
+
+  setDepth(depth) {
+    this.depth = depth;
+  }
+
+  process(sample) {
+    let d = this.dmin + (this.dmax - this.dmin) * ((Math.sin(this.lfoPhase) + 1) / 2);
+
+    this.lfoPhase += this.lfoInc;
+    if (this.lfoPhase >= Math.PI * 2) {
+      this.lfoPhase -= Math.PI * 2;
+    }
+
+    for (let i = 0; i < 6; i++) {
+        this.alps[i].setDelay(d);
+    }
+
+    let y = sample + this.zm1 * this.fb;
+    for (let i = 5; i >= 0; i--) {
+        y = this.alps[i].process(y);
+    }
+    
+    this.zm1 = y;
+    return sample + y * this.depth;
+  }
+}
+
+class PhaserWorklet extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.phaserL = new Phaser(sampleRate);
+    this.phaserR = new Phaser(sampleRate);
+  }
+
+  static get parameterDescriptors() {
+    return [
+      { name: 'minFreq', defaultValue: 440, minValue: 10, maxValue: 24000 },
+      { name: 'maxFreq', defaultValue: 1600, minValue: 10, maxValue: 24000 },
+      { name: 'rate', defaultValue: 0.5, minValue: 0, maxValue: 10 },
+      { name: 'depth', defaultValue: 1, minValue: 0, maxValue: 1 },
+      { name: 'feedback', defaultValue: 0.7, minValue: 0, maxValue: 0.99 },
+      { name: 'enabled', defaultValue: 0, minValue: 0, maxValue: 1 }
+    ];
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    const output = outputs[0];
+
+    if (!input || input.length === 0) return true;
+
+    const inL = input[0];
+    const inR = input[1] || input[0];
+    const outL = output[0];
+    const outR = output[1];
+    
+    if (!outL) return true;
+
+    const enabled = parameters.enabled.length > 1 ? parameters.enabled[0] : parameters.enabled[0];
+    
+    if (enabled < 0.5) {
+      if (inL) outL.set(inL);
+      if (outR && inR) outR.set(inR);
+      return true;
+    }
+
+    const minFreq = parameters.minFreq.length > 1 ? parameters.minFreq[0] : parameters.minFreq[0];
+    const maxFreq = parameters.maxFreq.length > 1 ? parameters.maxFreq[0] : parameters.maxFreq[0];
+    const rate = parameters.rate.length > 1 ? parameters.rate[0] : parameters.rate[0];
+    const depth = parameters.depth.length > 1 ? parameters.depth[0] : parameters.depth[0];
+    const fb = parameters.feedback.length > 1 ? parameters.feedback[0] : parameters.feedback[0];
+
+    this.phaserL.setRange(minFreq, maxFreq);
+    this.phaserL.setRate(rate);
+    this.phaserL.setDepth(depth);
+    this.phaserL.setFeedback(fb);
+
+    this.phaserR.setRange(minFreq, maxFreq);
+    this.phaserR.setRate(rate);
+    this.phaserR.setDepth(depth);
+    this.phaserR.setFeedback(fb);
+
+    const length = inL.length;
+    for (let i = 0; i < length; i++) {
+        outL[i] = this.phaserL.process(inL[i]);
+        if (outR) {
+            outR[i] = this.phaserR.process(inR ? inR[i] : inL[i]);
+        }
+    }
+
+    return true;
+  }
+}
+
+registerProcessor("phaser-worklet", PhaserWorklet);
+`;
 
 export class AudioEngine {
   private context: AudioContext | null = null
@@ -14,11 +159,13 @@ export class AudioEngine {
   private monoToStereoNode: ChannelMergerNode | null = null
   private lowPassMixNode: GainNode | null = null
   private masterGainNode: GainNode | null = null
+  private phaserNode: AudioWorkletNode | null = null
   private analyserNode: AnalyserNode | null = null
   private connectedElement: HTMLAudioElement | null = null
   private lowPassEnabled = true
   private lowPassFrequency = 55
   private lowPassQ = 0.54
+  private workletLoaded = false
 
   private clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value))
@@ -99,9 +246,16 @@ export class AudioEngine {
     )
   }
 
-  setupForElement(audioElement: HTMLAudioElement, options: EngineOptions): void {
+  async setupForElement(audioElement: HTMLAudioElement, options: EngineOptions): Promise<void> {
     if (!this.context) {
       this.context = new AudioContext()
+    }
+
+    if (!this.workletLoaded) {
+      const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
+      const url = URL.createObjectURL(blob)
+      await this.context.audioWorklet.addModule(url)
+      this.workletLoaded = true
     }
 
     if (this.connectedElement !== audioElement) {
@@ -113,12 +267,25 @@ export class AudioEngine {
       this.monoToStereoNode = this.context.createChannelMerger(2)
       this.lowPassMixNode = this.context.createGain()
       this.masterGainNode = this.context.createGain()
+      this.phaserNode = new AudioWorkletNode(this.context, 'phaser-worklet', {
+        outputChannelCount: [2]
+      })
       this.analyserNode = this.context.createAnalyser()
 
       this.lowPassFrequency = options.lowPassFrequency
       this.lowPassQ = options.lowPassQ
       this.lowPassEnabled = options.lowPassEnabled
       this.masterGainNode.gain.value = options.masterVolume
+      
+      this.setPhaserParams({
+        phaserMinFreq: options.phaserMinFreq,
+        phaserMaxFreq: options.phaserMaxFreq,
+        phaserRate: options.phaserRate,
+        phaserDepth: options.phaserDepth,
+        phaserFeedback: options.phaserFeedback
+      })
+      this.setPhaserEnabled(options.phaserEnabled)
+
       this.analyserNode.fftSize = 2048
       this.analyserNode.smoothingTimeConstant = 0.76
 
@@ -130,7 +297,8 @@ export class AudioEngine {
       this.splitterNode.connect(this.monoSumNode, 1, 0)
       this.monoToStereoNode.connect(this.lowPassMixNode)
       this.lowPassMixNode.connect(this.masterGainNode)
-      this.masterGainNode.connect(this.analyserNode)
+      this.masterGainNode.connect(this.phaserNode)
+      this.phaserNode.connect(this.analyserNode)
       this.analyserNode.connect(this.context.destination)
 
       this.reconnectGraph()
@@ -146,6 +314,14 @@ export class AudioEngine {
         this.context.currentTime,
         0.04,
       )
+      this.setPhaserParams({
+        phaserMinFreq: options.phaserMinFreq,
+        phaserMaxFreq: options.phaserMaxFreq,
+        phaserRate: options.phaserRate,
+        phaserDepth: options.phaserDepth,
+        phaserFeedback: options.phaserFeedback
+      })
+      this.setPhaserEnabled(options.phaserEnabled)
       this.reconnectGraph()
     }
   }
@@ -161,6 +337,28 @@ export class AudioEngine {
     }
 
     this.masterGainNode.gain.setTargetAtTime(value, this.context.currentTime, 0.04)
+  }
+
+  setPhaserEnabled(enabled: boolean): void {
+    if (!this.context || !this.phaserNode) return
+    const param = this.phaserNode.parameters.get('enabled')
+    if (param) param.setTargetAtTime(enabled ? 1 : 0, this.context.currentTime, 0.04)
+  }
+
+  setPhaserParams(params: {
+    phaserMinFreq: number
+    phaserMaxFreq: number
+    phaserRate: number
+    phaserDepth: number
+    phaserFeedback: number
+  }): void {
+    if (!this.context || !this.phaserNode) return
+    const t = this.context.currentTime
+    this.phaserNode.parameters.get('minFreq')?.setTargetAtTime(params.phaserMinFreq, t, 0.04)
+    this.phaserNode.parameters.get('maxFreq')?.setTargetAtTime(params.phaserMaxFreq, t, 0.04)
+    this.phaserNode.parameters.get('rate')?.setTargetAtTime(params.phaserRate, t, 0.04)
+    this.phaserNode.parameters.get('depth')?.setTargetAtTime(params.phaserDepth, t, 0.04)
+    this.phaserNode.parameters.get('feedback')?.setTargetAtTime(params.phaserFeedback, t, 0.04)
   }
 
   getWaveformData(target: Uint8Array<ArrayBuffer>): boolean {
@@ -210,6 +408,7 @@ export class AudioEngine {
     this.monoToStereoNode?.disconnect()
     this.lowPassMixNode?.disconnect()
     this.masterGainNode?.disconnect()
+    this.phaserNode?.disconnect()
     this.analyserNode?.disconnect()
     this.sourceNode = null
     this.splitterNode = null
@@ -218,6 +417,7 @@ export class AudioEngine {
     this.monoToStereoNode = null
     this.lowPassMixNode = null
     this.masterGainNode = null
+    this.phaserNode = null
     this.analyserNode = null
     this.connectedElement = null
   }

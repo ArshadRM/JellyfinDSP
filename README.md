@@ -1,4 +1,4 @@
-# JellyfinOSU
+# JellyfinDSP
 
 Web app prototype for Jellyfin music playback with an osu!-inspired browser and realtime DSP controls.
 
