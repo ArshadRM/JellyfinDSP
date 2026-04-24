@@ -54,21 +54,37 @@ function App() {
   const [search, setSearch] = useState('')
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [tracks, setTracks] = useState<JellyfinAudioItem[]>([])
+  const [totalTrackCount, setTotalTrackCount] = useState(0)
   const [selectedTrack, setSelectedTrack] = useState<JellyfinAudioItem | null>(null)
   const [masterVolume, setMasterVolume] = useState(0.85)
   const [isSpeedEnabled, setIsSpeedEnabled] = useState(true)
-  const [playbackRate, setPlaybackRate] = useState(0.8)
+  const [speedPercent, setSpeedPercent] = useState(80)
   const [preservePitch, setPreservePitch] = useState(true)
   const [isLowPassEnabled, setIsLowPassEnabled] = useState(true)
   const [lowPassFrequency, setLowPassFrequency] = useState(55)
-  const [lowPassQ, setLowPassQ] = useState(0.54)
+  const [lowPassQ, setLowPassQ] = useState(0.80)
   const [isPlaying, setIsPlaying] = useState(false)
   const [randomTargetId, setRandomTargetId] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
 
   const audioRef = useRef<HTMLAudioElement>(null)
+  const waveformCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const currentTimeRef = useRef(0)
+  const durationRef = useRef(0)
   const activeCardRef = useRef<HTMLButtonElement | null>(null)
   const preloadAudioCacheRef = useRef<Record<string, HTMLAudioElement | undefined>>({})
   const engineRef = useRef(new AudioEngine())
+
+  const playbackRate = speedPercent / 100
+
+  useEffect(() => {
+    currentTimeRef.current = currentTime
+  }, [currentTime])
+
+  useEffect(() => {
+    durationRef.current = duration
+  }, [duration])
 
   const isAuthenticated = token.length > 0 && userId.length > 0
 
@@ -149,6 +165,7 @@ function App() {
   async function loadTracks(
     query = '',
     authOverride?: { token: string; userId: string },
+    fetchOptions?: { startIndex?: number; limit?: number },
   ): Promise<void> {
     const activeToken = authOverride?.token ?? token
     const activeUserId = authOverride?.userId ?? userId
@@ -160,8 +177,16 @@ function App() {
     setIsLoadingTracks(true)
 
     try {
-      const items = await fetchAudioLibrary(serverUrl, activeUserId, activeToken, query)
+      const response = await fetchAudioLibrary(
+        serverUrl,
+        activeUserId,
+        activeToken,
+        query,
+        fetchOptions,
+      )
+      const items = response.items
       setTracks(items)
+      setTotalTrackCount(response.totalRecordCount)
       setStatus(`Loaded ${items.length} tracks from Jellyfin.`)
       setSelectedTrack((prev) => {
         if (!items.length) {
@@ -320,6 +345,33 @@ function App() {
     await handleSelectTrack(randomTrack)
   }
 
+  async function handleShuffleView(): Promise<void> {
+    if (!isAuthenticated) {
+      return
+    }
+
+    const windowSize = 220
+    const maxStart = Math.max(0, totalTrackCount - windowSize)
+    const randomStart = maxStart > 0 ? Math.floor(Math.random() * (maxStart + 1)) : 0
+
+    await loadTracks(search, undefined, {
+      startIndex: randomStart,
+      limit: windowSize,
+    })
+  }
+
+  function handleScrub(timeSec: number): void {
+    const audio = audioRef.current
+    if (!audio || Number.isNaN(timeSec)) {
+      return
+    }
+
+    const maxTime = Number.isFinite(audio.duration) ? audio.duration : 0
+    const clamped = Math.min(maxTime, Math.max(0, timeSec))
+    audio.currentTime = clamped
+    setCurrentTime(clamped)
+  }
+
   async function handleTrackEnded(): Promise<void> {
     const currentIndex = getSelectedIndex()
     if (currentIndex < 0) {
@@ -342,6 +394,100 @@ function App() {
       block: 'center',
     })
   }, [selectedTrack?.Id])
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) {
+      return
+    }
+
+    const updateCurrentTime = (): void => {
+      setCurrentTime(audio.currentTime || 0)
+    }
+
+    const updateDuration = (): void => {
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+    }
+
+    audio.addEventListener('timeupdate', updateCurrentTime)
+    audio.addEventListener('loadedmetadata', updateDuration)
+    audio.addEventListener('durationchange', updateDuration)
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateCurrentTime)
+      audio.removeEventListener('loadedmetadata', updateDuration)
+      audio.removeEventListener('durationchange', updateDuration)
+    }
+  }, [])
+
+  useEffect(() => {
+    const canvas = waveformCanvasRef.current
+    if (!canvas) {
+      return
+    }
+
+    const context = canvas.getContext('2d')
+    if (!context) {
+      return
+    }
+
+    const waveformData = new Uint8Array(1024)
+    let rafId = 0
+
+    const draw = (): void => {
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
+
+      if (!width || !height) {
+        rafId = requestAnimationFrame(draw)
+        return
+      }
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width
+        canvas.height = height
+      }
+
+      context.fillStyle = 'rgba(8, 16, 31, 0.88)'
+      context.fillRect(0, 0, width, height)
+
+      const hasData = engineRef.current.getWaveformData(waveformData)
+      context.strokeStyle = '#ff9f2f'
+      context.lineWidth = 2
+      context.beginPath()
+
+      if (hasData) {
+        for (let i = 0; i < waveformData.length; i += 1) {
+          const x = (i / (waveformData.length - 1)) * width
+          const y = (waveformData[i] / 255) * height
+
+          if (i === 0) {
+            context.moveTo(x, y)
+          } else {
+            context.lineTo(x, y)
+          }
+        }
+      } else {
+        context.moveTo(0, height / 2)
+        context.lineTo(width, height / 2)
+      }
+
+      context.stroke()
+
+      const localDuration = durationRef.current
+      const progress = localDuration > 0 ? currentTimeRef.current / localDuration : 0
+      context.fillStyle = 'rgba(255, 109, 42, 0.22)'
+      context.fillRect(0, 0, width * progress, height)
+
+      rafId = requestAnimationFrame(draw)
+    }
+
+    rafId = requestAnimationFrame(draw)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+    }
+  }, [])
 
   useEffect(() => {
     if (!tracks.length) {
@@ -571,26 +717,25 @@ function App() {
         </div>
 
         <div className="control-card">
-          <h2>Speed</h2>
-
-          <label className="inline-switch">
-            <input
-              type="checkbox"
-              checked={isSpeedEnabled}
-              onChange={(event) => setIsSpeedEnabled(event.target.checked)}
-            />
-            Enable Speed
-          </label>
+          <div className="menu-head">
+            <button
+              type="button"
+              onClick={() => setIsSpeedEnabled((prev) => !prev)}
+            >
+              {isSpeedEnabled ? 'Speed On' : 'Speed Off'}
+            </button>
+            <h2>Speed</h2>
+          </div>
 
           <label>
-            Speed ({playbackRate.toFixed(2)}x)
+            Speed ({speedPercent}%)
             <input
               type="range"
-              min={0.6}
-              max={0.99}
-              step={0.01}
-              value={playbackRate}
-              onChange={(event) => setPlaybackRate(Number(event.target.value))}
+              min={60}
+              max={99}
+              step={1}
+              value={speedPercent}
+              onChange={(event) => setSpeedPercent(Number(event.target.value))}
               disabled={!isSpeedEnabled}
             />
           </label>
@@ -607,16 +752,15 @@ function App() {
         </div>
 
         <div className="control-card">
-          <h2>Low Pass</h2>
-
-          <label className="inline-switch">
-            <input
-              type="checkbox"
-              checked={isLowPassEnabled}
-              onChange={(event) => setIsLowPassEnabled(event.target.checked)}
-            />
-            Enable Low Pass
-          </label>
+          <div className="menu-head">
+            <button
+              type="button"
+              onClick={() => setIsLowPassEnabled((prev) => !prev)}
+            >
+              {isLowPassEnabled ? 'Low Pass On' : 'Low Pass Off'}
+            </button>
+            <h2>Low Pass</h2>
+          </div>
 
           <label>
             Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
@@ -637,7 +781,7 @@ function App() {
               type="range"
               min={0.01}
               max={10}
-              step={0.1}
+              step={1}
               value={lowPassQ}
               onChange={(event) => setLowPassQ(Number(event.target.value))}
               disabled={!isLowPassEnabled}
@@ -647,9 +791,39 @@ function App() {
       </section>
 
       <section className="panel right-panel">
+        <div className="playback-strip">
+          <div className="playback-meta">
+            <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
+            <span>
+              {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
+            </span>
+          </div>
+          <canvas ref={waveformCanvasRef} className="waveform-canvas" />
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, duration)}
+            step={1}
+            value={Math.min(currentTime, Math.max(0, duration))}
+            onChange={(event) => handleScrub(Number(event.target.value))}
+            disabled={!selectedTrack || duration <= 0}
+            className="scrub-slider"
+          />
+        </div>
+
         <header className="library-head">
           <h2>Library Carousel</h2>
           <div className="library-actions">
+            <button
+              type="button"
+              className="ghost nav-btn"
+              onClick={() => {
+                void handleShuffleView()
+              }}
+              disabled={!isAuthenticated || totalTrackCount === 0}
+            >
+              Shuffle View
+            </button>
             <button
               type="button"
               className="ghost nav-btn"

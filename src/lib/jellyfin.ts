@@ -19,6 +19,16 @@ type JellyfinItemsResponse = {
   TotalRecordCount: number
 }
 
+export type JellyfinAudioLibraryPage = {
+  items: JellyfinAudioItem[]
+  totalRecordCount: number
+}
+
+export type FetchAudioLibraryOptions = {
+  startIndex?: number
+  limit?: number
+}
+
 const APP_CLIENT = 'JellyfinOSU'
 const APP_DEVICE = 'Web Browser'
 const APP_DEVICE_ID = 'jellyfinosu-web'
@@ -117,15 +127,19 @@ export async function fetchAudioLibrary(
   userId: string,
   token: string,
   searchTerm: string,
-): Promise<JellyfinAudioItem[]> {
+  options?: FetchAudioLibraryOptions,
+): Promise<JellyfinAudioLibraryPage> {
+  const startIndex = Math.max(0, Math.floor(options?.startIndex ?? 0))
+  const limit = Math.max(1, Math.min(500, Math.floor(options?.limit ?? 220)))
+
   const baseUrl = cleanUrl(serverUrl)
   const params = new URLSearchParams({
     Recursive: 'true',
     IncludeItemTypes: 'Audio',
     SortBy: 'SortName',
     SortOrder: 'Ascending',
-    Limit: '250',
-    StartIndex: '0',
+    Limit: String(limit),
+    StartIndex: String(startIndex),
     Fields: 'Path,RunTimeTicks,PrimaryImageAspectRatio,MediaSources',
   })
 
@@ -142,7 +156,10 @@ export async function fetchAudioLibrary(
     token,
   )
 
-  return response.Items ?? []
+  return {
+    items: response.Items ?? [],
+    totalRecordCount: response.TotalRecordCount ?? 0,
+  }
 }
 
 export function buildStreamUrl(

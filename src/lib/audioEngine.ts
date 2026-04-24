@@ -14,6 +14,7 @@ export class AudioEngine {
   private monoToStereoNode: ChannelMergerNode | null = null
   private lowPassMixNode: GainNode | null = null
   private masterGainNode: GainNode | null = null
+  private analyserNode: AnalyserNode | null = null
   private connectedElement: HTMLAudioElement | null = null
   private lowPassEnabled = true
   private lowPassFrequency = 55
@@ -112,11 +113,14 @@ export class AudioEngine {
       this.monoToStereoNode = this.context.createChannelMerger(2)
       this.lowPassMixNode = this.context.createGain()
       this.masterGainNode = this.context.createGain()
+      this.analyserNode = this.context.createAnalyser()
 
       this.lowPassFrequency = options.lowPassFrequency
       this.lowPassQ = options.lowPassQ
       this.lowPassEnabled = options.lowPassEnabled
       this.masterGainNode.gain.value = options.masterVolume
+      this.analyserNode.fftSize = 2048
+      this.analyserNode.smoothingTimeConstant = 0.76
 
       this.rebuildLowPassNode()
 
@@ -126,7 +130,8 @@ export class AudioEngine {
       this.splitterNode.connect(this.monoSumNode, 1, 0)
       this.monoToStereoNode.connect(this.lowPassMixNode)
       this.lowPassMixNode.connect(this.masterGainNode)
-      this.masterGainNode.connect(this.context.destination)
+      this.masterGainNode.connect(this.analyserNode)
+      this.analyserNode.connect(this.context.destination)
 
       this.reconnectGraph()
     }
@@ -156,6 +161,15 @@ export class AudioEngine {
     }
 
     this.masterGainNode.gain.setTargetAtTime(value, this.context.currentTime, 0.04)
+  }
+
+  getWaveformData(target: Uint8Array<ArrayBuffer>): boolean {
+    if (!this.analyserNode) {
+      return false
+    }
+
+    this.analyserNode.getByteTimeDomainData(target)
+    return true
   }
 
   async resume(): Promise<void> {
@@ -196,6 +210,7 @@ export class AudioEngine {
     this.monoToStereoNode?.disconnect()
     this.lowPassMixNode?.disconnect()
     this.masterGainNode?.disconnect()
+    this.analyserNode?.disconnect()
     this.sourceNode = null
     this.splitterNode = null
     this.monoSumNode = null
@@ -203,6 +218,7 @@ export class AudioEngine {
     this.monoToStereoNode = null
     this.lowPassMixNode = null
     this.masterGainNode = null
+    this.analyserNode = null
     this.connectedElement = null
   }
 }
