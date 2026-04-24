@@ -136,8 +136,6 @@ export async function fetchAudioLibrary(
   const params = new URLSearchParams({
     Recursive: 'true',
     IncludeItemTypes: 'Audio',
-    SortBy: 'SortName',
-    SortOrder: 'Ascending',
     Limit: String(limit),
     StartIndex: String(startIndex),
     Fields: 'Path,RunTimeTicks,PrimaryImageAspectRatio,MediaSources',

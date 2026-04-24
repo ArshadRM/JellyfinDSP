@@ -44,6 +44,19 @@ function applyPreservePitch(audio: HTMLAudioElement, preservePitch: boolean): vo
   elementWithPitch.webkitPreservesPitch = preservePitch
 }
 
+function shuffleItems(items: JellyfinAudioItem[]): JellyfinAudioItem[] {
+  const next = [...items]
+
+  for (let i = next.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const temp = next[i]
+    next[i] = next[j]
+    next[j] = temp
+  }
+
+  return next
+}
+
 function App() {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL)
   const [username, setUsername] = useState('')
@@ -59,7 +72,7 @@ function App() {
   const [masterVolume, setMasterVolume] = useState(0.85)
   const [isSpeedEnabled, setIsSpeedEnabled] = useState(true)
   const [speedPercent, setSpeedPercent] = useState(80)
-  const [preservePitch, setPreservePitch] = useState(true)
+  const [adjustPitch, setAdjustPitch] = useState(false)
   const [isLowPassEnabled, setIsLowPassEnabled] = useState(true)
   const [lowPassFrequency, setLowPassFrequency] = useState(55)
   const [lowPassQ, setLowPassQ] = useState(0.80)
@@ -68,30 +81,32 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [scrubberPeaks, setScrubberPeaks] = useState<number[]>([])
+  const [hasInitialShuffleLoaded, setHasInitialShuffleLoaded] = useState(false)
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const backgroundWaveformRef = useRef<HTMLCanvasElement | null>(null)
   const currentTimeRef = useRef(0)
   const durationRef = useRef(0)
+  const expectedDurationRef = useRef(0)
   const activeCardRef = useRef<HTMLButtonElement | null>(null)
   const carouselWrapRef = useRef<HTMLDivElement | null>(null)
   const preloadAudioCacheRef = useRef<Record<string, HTMLAudioElement | undefined>>({})
+  const bufferedTrackUrlCacheRef = useRef<Record<string, string | undefined>>({})
+  const bufferingTasksRef = useRef<Record<string, Promise<void> | undefined>>({})
+  const scrubberPeakCacheRef = useRef<Record<string, number[] | undefined>>({})
+  const scrubberPeakTasksRef = useRef<Record<string, Promise<void> | undefined>>({})
   const engineRef = useRef(new AudioEngine())
 
   async function buildSongIntensityPeaks(
     streamUrl: string,
-    signal: AbortSignal,
   ): Promise<number[]> {
-    const response = await fetch(streamUrl, { signal })
+    const response = await fetch(streamUrl)
     if (!response.ok) {
       throw new Error(`Waveform fetch failed (${response.status})`)
     }
 
     const payload = await response.arrayBuffer()
-    if (signal.aborted) {
-      return []
-    }
 
     const decodeContext = new AudioContext()
     try {
@@ -131,7 +146,70 @@ function App() {
     }
   }
 
+  function getTrackById(trackId: string): JellyfinAudioItem | undefined {
+    return tracks.find((track) => track.Id === trackId)
+  }
+
+  async function ensureTrackBuffered(trackId: string): Promise<void> {
+    if (bufferedTrackUrlCacheRef.current[trackId] || bufferingTasksRef.current[trackId]) {
+      return
+    }
+
+    const track = getTrackById(trackId)
+    if (!track) {
+      return
+    }
+
+    const task = (async () => {
+      try {
+        const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId)
+        const response = await fetch(streamUrl)
+        if (!response.ok) {
+          return
+        }
+
+        const blob = await response.blob()
+        const objectUrl = URL.createObjectURL(blob)
+        bufferedTrackUrlCacheRef.current[trackId] = objectUrl
+      } finally {
+        delete bufferingTasksRef.current[trackId]
+      }
+    })()
+
+    bufferingTasksRef.current[trackId] = task
+    await task
+  }
+
+  async function ensureWaveformCached(trackId: string): Promise<void> {
+    if (scrubberPeakCacheRef.current[trackId] || scrubberPeakTasksRef.current[trackId]) {
+      return
+    }
+
+    const task = (async () => {
+      try {
+        await ensureTrackBuffered(trackId)
+        const bufferedUrl = bufferedTrackUrlCacheRef.current[trackId]
+        const track = getTrackById(trackId)
+        if (!track) {
+          return
+        }
+
+        const streamUrl = bufferedUrl ?? buildStreamUrl(serverUrl, trackId, token, userId)
+        const peaks = await buildSongIntensityPeaks(streamUrl)
+        scrubberPeakCacheRef.current[trackId] = peaks
+      } finally {
+        delete scrubberPeakTasksRef.current[trackId]
+      }
+    })()
+
+    scrubberPeakTasksRef.current[trackId] = task
+    await task
+  }
+
   const playbackRate = speedPercent / 100
+  const frequencyMultiplier = isSpeedEnabled && adjustPitch ? playbackRate : 1
+  const tempoMultiplier = isSpeedEnabled && !adjustPitch ? playbackRate : 1
+  const effectiveRate = frequencyMultiplier * tempoMultiplier
 
   useEffect(() => {
     currentTimeRef.current = currentTime
@@ -172,14 +250,20 @@ function App() {
   }, [serverUrl, token, userId, username])
 
   useEffect(() => {
+    if (!token || !userId) {
+      setHasInitialShuffleLoaded(false)
+    }
+  }, [token, userId])
+
+  useEffect(() => {
     const audio = audioRef.current
     if (!audio) {
       return
     }
 
-    audio.playbackRate = isSpeedEnabled ? playbackRate : 1
-    applyPreservePitch(audio, isSpeedEnabled && preservePitch)
-  }, [isSpeedEnabled, playbackRate, preservePitch])
+    audio.playbackRate = effectiveRate
+    applyPreservePitch(audio, tempoMultiplier !== 1)
+  }, [effectiveRate, tempoMultiplier])
 
   useEffect(() => {
     engineRef.current.setMasterVolume(masterVolume)
@@ -200,6 +284,7 @@ function App() {
   useEffect(() => {
     return () => {
       engineRef.current.disconnect()
+      clearBufferedTrackCache()
     }
   }, [])
 
@@ -215,6 +300,21 @@ function App() {
     }
 
     preloadAudioCacheRef.current = {}
+  }
+
+  function clearBufferedTrackCache(): void {
+    const entries = Object.entries(bufferedTrackUrlCacheRef.current)
+    for (const [, objectUrl] of entries) {
+      if (!objectUrl) {
+        continue
+      }
+      URL.revokeObjectURL(objectUrl)
+    }
+
+    bufferedTrackUrlCacheRef.current = {}
+    bufferingTasksRef.current = {}
+    scrubberPeakCacheRef.current = {}
+    scrubberPeakTasksRef.current = {}
   }
 
   async function loadTracks(
@@ -239,7 +339,7 @@ function App() {
         query,
         fetchOptions,
       )
-      const items = response.items
+      const items = shuffleItems(response.items)
       setTracks(items)
       setTotalTrackCount(response.totalRecordCount)
       setStatus(`Loaded ${items.length} tracks from Jellyfin.`)
@@ -263,7 +363,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || !hasInitialShuffleLoaded) {
       return
     }
 
@@ -272,7 +372,16 @@ function App() {
     }, 260)
 
     return () => window.clearTimeout(timer)
-  }, [search, isAuthenticated])
+  }, [search, isAuthenticated, hasInitialShuffleLoaded])
+
+  useEffect(() => {
+    if (!isAuthenticated || hasInitialShuffleLoaded) {
+      return
+    }
+
+    setHasInitialShuffleLoaded(true)
+    void handleShuffleView()
+  }, [isAuthenticated, hasInitialShuffleLoaded])
 
   async function handleLogin(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
@@ -301,8 +410,12 @@ function App() {
     setSelectedTrack(null)
     setRandomTargetId(null)
     setIsPlaying(false)
+    setCurrentTime(0)
+    setDuration(0)
+    setScrubberPeaks([])
     localStorage.removeItem(STORAGE_KEY)
     clearPreloadCache()
+    clearBufferedTrackCache()
 
     const audio = audioRef.current
     if (audio) {
@@ -322,12 +435,37 @@ function App() {
 
     const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId)
     setSelectedTrack(track)
+    expectedDurationRef.current = msFromTicks(track.RunTimeTicks) / 1000
+    setDuration(expectedDurationRef.current)
+
+    const cachedPeaks = scrubberPeakCacheRef.current[track.Id]
+    setScrubberPeaks(cachedPeaks ?? [])
+
+    if (!cachedPeaks) {
+      void ensureWaveformCached(track.Id).then(() => {
+        const refreshed = scrubberPeakCacheRef.current[track.Id]
+        if (refreshed) {
+          setScrubberPeaks(refreshed)
+        }
+      })
+    }
+
+    if (!bufferedTrackUrlCacheRef.current[track.Id]) {
+      setStatus(`Buffering ${track.Name}...`)
+      try {
+        await ensureTrackBuffered(track.Id)
+      } catch {
+        // Fall back to stream URL if full buffering fails.
+      }
+    }
+
+    const bufferedUrl = bufferedTrackUrlCacheRef.current[track.Id]
 
     audio.crossOrigin = 'anonymous'
-    audio.src = streamUrl
+    audio.src = bufferedUrl ?? streamUrl
     audio.load()
-    audio.playbackRate = isSpeedEnabled ? playbackRate : 1
-    applyPreservePitch(audio, isSpeedEnabled && preservePitch)
+    audio.playbackRate = effectiveRate
+    applyPreservePitch(audio, tempoMultiplier !== 1)
 
     engineRef.current.setupForElement(audio, {
       lowPassFrequency,
@@ -498,7 +636,9 @@ function App() {
     }
 
     const updateDuration = (): void => {
-      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      const metadataDuration = Number.isFinite(audio.duration) ? audio.duration : 0
+      const stableDuration = expectedDurationRef.current || metadataDuration
+      setDuration(stableDuration)
     }
 
     audio.addEventListener('timeupdate', updateCurrentTime)
@@ -511,33 +651,6 @@ function App() {
       audio.removeEventListener('durationchange', updateDuration)
     }
   }, [])
-
-  useEffect(() => {
-    if (!selectedTrack || !token || !userId) {
-      setScrubberPeaks([])
-      return
-    }
-
-    const abortController = new AbortController()
-    const streamUrl = buildStreamUrl(serverUrl, selectedTrack.Id, token, userId)
-
-    void (async () => {
-      try {
-        const peaks = await buildSongIntensityPeaks(streamUrl, abortController.signal)
-        if (!abortController.signal.aborted) {
-          setScrubberPeaks(peaks)
-        }
-      } catch {
-        if (!abortController.signal.aborted) {
-          setScrubberPeaks([])
-        }
-      }
-    })()
-
-    return () => {
-      abortController.abort()
-    }
-  }, [selectedTrack?.Id, token, userId, serverUrl])
 
   useEffect(() => {
     const backgroundCanvas = backgroundWaveformRef.current
@@ -709,10 +822,15 @@ function App() {
       if (!preloadAudioCacheRef.current[track.Id]) {
         const preloadAudio = new Audio()
         preloadAudio.preload = 'auto'
-        preloadAudio.src = buildStreamUrl(serverUrl, track.Id, token, userId)
+        preloadAudio.src =
+          bufferedTrackUrlCacheRef.current[track.Id] ??
+          buildStreamUrl(serverUrl, track.Id, token, userId)
         preloadAudio.load()
         preloadAudioCacheRef.current[track.Id] = preloadAudio
       }
+
+      void ensureTrackBuffered(track.Id)
+      void ensureWaveformCached(track.Id)
     }
 
     if (randomTargetId) {
@@ -720,10 +838,15 @@ function App() {
       if (!preloadAudioCacheRef.current[randomTargetId]) {
         const preloadAudio = new Audio()
         preloadAudio.preload = 'auto'
-        preloadAudio.src = buildStreamUrl(serverUrl, randomTargetId, token, userId)
+        preloadAudio.src =
+          bufferedTrackUrlCacheRef.current[randomTargetId] ??
+          buildStreamUrl(serverUrl, randomTargetId, token, userId)
         preloadAudio.load()
         preloadAudioCacheRef.current[randomTargetId] = preloadAudio
       }
+
+      void ensureTrackBuffered(randomTargetId)
+      void ensureWaveformCached(randomTargetId)
     }
 
     for (const [id, cachedAudio] of Object.entries(preloadAudioCacheRef.current)) {
@@ -925,10 +1048,10 @@ function App() {
           <label className="inline-switch">
             <input
               type="checkbox"
-              checked={preservePitch}
-              onChange={(event) => setPreservePitch(event.target.checked)}
+              checked={adjustPitch}
+              onChange={(event) => setAdjustPitch(event.target.checked)}
             />
-            Preserve pitch
+            Adjust Pitch
           </label>
         </div>
 
@@ -960,7 +1083,7 @@ function App() {
             <input
               type="range"
               min={0.01}
-              max={10}
+              max={5}
               step={0.01}
               value={lowPassQ}
               onChange={(event) => setLowPassQ(Number(event.target.value))}
