@@ -5,6 +5,7 @@ import { AudioEngine } from './lib/audioEngine'
 import { Knob } from './components/Knob'
 import { RangeSlider } from './components/RangeSlider'
 import { Transport } from './components/Transport'
+import { FullscreenButton } from './components/FullscreenButton'
 import {
   authenticate,
   authHeader,
@@ -162,7 +163,7 @@ function App() {
   const [transcodeChannels, setTranscodeChannels] = useState<1 | 2>(initialSettings.transcodeChannels ?? 2)
   const [isCachingExpanded, setIsCachingExpanded] = useState(false)
   const [cachingMode, setCachingMode] = useState<CacheMode>(initialSettings.cachingMode ?? 'queue-nearby-random')
-  const [cacheLimitMb, setCacheLimitMb] = useState(initialSettings.cacheLimitMb ?? 4096)
+  const [cacheLimitMb, setCacheLimitMb] = useState(initialSettings.cacheLimitMb ?? 1024)
   const [isCacheLimitTextOnly, setIsCacheLimitTextOnly] = useState(initialSettings.isCacheLimitTextOnly ?? true)
   const [cachedTracks, setCachedTracks] = useState<CachedTrackInfo[]>([])
   const [isStatsExpanded, setIsStatsExpanded] = useState(initialSettings.isStatsExpanded ?? true)
@@ -1701,6 +1702,8 @@ function App() {
         <section className="panel left-panel" ref={leftPanelRef}>
           <h1>JellyfinDSP</h1>
 
+          <p className="status">{status}</p>
+
           <details className="auth-section">
             <summary>Jellyfin + Data Settings</summary>
             <div className="control-card login-mod">
@@ -1952,8 +1955,6 @@ function App() {
             </div>
           </details>
 
-          <p className="status">{status}</p>
-
           <div className="control-card">
             <div className="queue-panel" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
               <div className={`menu-head ${isQueueExpanded ? 'expanded' : ''}`}>
@@ -2171,26 +2172,30 @@ function App() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    <Knob
-                      label="Q / Resonance"
-                      value={lowPassQ}
-                      min={0.01}
-                      max={5}
-                      step={0.01}
-                      onChange={(val) => setLowPassQ(val)}
-                      onReset={() => setLowPassQ(0.80)}
-                    />
-                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <div style={{ flex: '0 0 33%', display: 'flex', alignItems: 'center' }}>
+                      <Knob
+                        label="Q / Resonance"
+                        value={lowPassQ}
+                        min={0.01}
+                        max={5}
+                        step={0.01}
+                        onChange={(val) => setLowPassQ(val)}
+                        onReset={() => setLowPassQ(0.80)}
+                      />
+                    </div>
 
-                  <label className="inline-switch" style={{ margin: '0 auto' }}>
-                    <input
-                      type="checkbox"
-                      checked={isReduceClippingEnabled}
-                      onChange={(event) => setIsReduceClippingEnabled(event.target.checked)}
-                    />
-                    Reduce Clipping
-                  </label>
+                    <div style={{ flex: '1', display: 'flex', alignItems: 'center' }}>
+                      <label className="inline-switch">
+                        <input
+                          type="checkbox"
+                          checked={isReduceClippingEnabled}
+                          onChange={(event) => setIsReduceClippingEnabled(event.target.checked)}
+                        />
+                        Reduce Clipping
+                      </label>
+                    </div>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -2406,77 +2411,26 @@ function App() {
               onPrev={() => { void handleRestartOrPrev() }}
               disabled={!selectedTrack}
             />
-            <button
-              type="button"
-              className="ghost fullscreen-icon-btn mobile-fullscreen-btn"
-              onClick={() => { void toggleFullscreenMode() }}
-              title={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
-              aria-label={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
-            >
-              {isFullscreenActive ? (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="9 3 3 3 3 9" />
-                  <line x1="3" y1="3" x2="10" y2="10" />
-                  <polyline points="15 21 21 21 21 15" />
-                  <line x1="14" y1="14" x2="21" y2="21" />
-                  <polyline points="21 9 21 3 15 3" />
-                  <line x1="21" y1="3" x2="14" y2="10" />
-                  <polyline points="3 15 3 21 9 21" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="15 3 21 3 21 9" />
-                  <polyline points="9 21 3 21 3 15" />
-                  <polyline points="21 15 21 21 15 21" />
-                  <polyline points="3 9 3 3 9 3" />
-                </svg>
-              )}
-            </button>
           </div>
 
-          <div className={`player-right ${isVolumeHidden ? 'hidden' : ''}`}>
+          <div className="player-right">
             {!isVolumeHidden && (
-              <>
-                <div className="player-volume">
-                  <Knob
-                    label="Volume"
-                    value={masterVolume}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(val) => setMasterVolume(val)}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="ghost fullscreen-icon-btn"
-                  onClick={() => { void toggleFullscreenMode() }}
-                  title={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
-                  aria-label={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
-                >
-                  {isFullscreenActive ? (
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="9 3 3 3 3 9" />
-                      <line x1="3" y1="3" x2="10" y2="10" />
-                      <polyline points="15 21 21 21 21 15" />
-                      <line x1="14" y1="14" x2="21" y2="21" />
-                      <polyline points="21 9 21 3 15 3" />
-                      <line x1="21" y1="3" x2="14" y2="10" />
-                      <polyline points="3 15 3 21 9 21" />
-                      <line x1="3" y1="21" x2="10" y2="14" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="15 3 21 3 21 9" />
-                      <polyline points="9 21 3 21 3 15" />
-                      <polyline points="21 15 21 21 15 21" />
-                      <polyline points="3 9 3 3 9 3" />
-                    </svg>
-                  )}
-                </button>
-              </>
+              <div className="player-volume">
+                <Knob
+                  label="Volume"
+                  value={masterVolume}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={(val) => setMasterVolume(val)}
+                />
+              </div>
             )}
+            <FullscreenButton
+              isActive={isFullscreenActive}
+              onToggle={() => { void toggleFullscreenMode() }}
+              className="playbar-fullscreen-btn"
+            />
           </div>
         </div>
       </aside>
