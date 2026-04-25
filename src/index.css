@@ -97,13 +97,187 @@ h2 {
   gap: 0.8rem;
 }
 
-.auth-form label,
 .control-card label {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   color: var(--text-dim);
   font-size: 0.92rem;
+}
+
+.label-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.1rem;
+}
+
+.label-header span {
+  flex: 1;
+}
+
+.param-input {
+  width: 55px !important;
+  padding: 0.15rem 0.3rem !important;
+  font-size: 0.8rem !important;
+  text-align: right;
+  background: rgba(15, 25, 45, 0.45) !important;
+  border: 1px solid rgba(154, 176, 202, 0.2) !important;
+  border-radius: 6px !important;
+  color: var(--accent) !important;
+  font-family: inherit;
+}
+
+.param-input:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+  background: rgba(20, 35, 60, 0.6) !important;
+}
+
+.media-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background: rgba(10, 20, 40, 0.4);
+  border-radius: 12px;
+}
+
+.media-controls button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 1.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.media-controls button:hover:not(:disabled) {
+  background: rgba(255, 142, 60, 0.15);
+  color: var(--accent);
+  transform: scale(1.1);
+}
+
+.media-controls button.play-pause {
+  font-size: 1.8rem;
+  background: var(--accent-gradient);
+  color: white;
+  width: 54px;
+  height: 54px;
+  box-shadow: 0 4px 15px rgba(255, 142, 60, 0.3);
+}
+
+.media-controls button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.queue-panel {
+  margin-top: 1.5rem;
+  border-top: 1px solid rgba(154, 176, 202, 0.1);
+  padding-top: 1rem;
+}
+
+.queue-panel h3 {
+  font-size: 1rem;
+  color: var(--text-dim);
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  scrollbar-width: thin;
+}
+
+.queue-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.queue-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 142, 60, 0.3);
+  border-radius: 2px;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: rgba(15, 25, 45, 0.4);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.queue-item img {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.queue-item .info {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-item .info .name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-item .remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  padding: 0.2rem;
+  opacity: 0.6;
+}
+
+.queue-item .remove-btn:hover {
+  opacity: 1;
+}
+
+.add-queue-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.2s;
+  order: 2;
+}
+
+.add-queue-btn:hover {
+  background: rgba(255, 142, 60, 0.1);
+}
+
+.track-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
 }
 
 input {
@@ -191,7 +365,7 @@ button:disabled {
   overflow: hidden;
 }
 
-.right-panel > * {
+.right-panel>* {
   position: relative;
   z-index: 1;
 }
@@ -307,7 +481,7 @@ button:disabled {
 }
 
 .library-head input {
-  width: min(320px, 55%);
+  width: min(325px, 55%);
 }
 
 .nav-btn {
@@ -340,7 +514,7 @@ button:disabled {
   text-align: left;
 }
 
-.track-card > * {
+.track-card>* {
   transform: skewX(12deg);
 }
 
@@ -388,6 +562,7 @@ button:disabled {
   border-radius: 12px;
   padding: 1rem;
 }
+
 .auth-section summary {
   cursor: pointer;
   padding: 0.4rem 0.2rem;
@@ -398,6 +573,7 @@ button:disabled {
   transition: color 0.2s;
   list-style: none;
 }
+
 .auth-section summary::before {
   content: '▶';
   display: inline-block;
@@ -405,12 +581,15 @@ button:disabled {
   font-size: 0.8rem;
   transition: transform 0.2s;
 }
+
 .auth-section[open] summary::before {
   transform: rotate(90deg);
 }
+
 .auth-section summary:hover {
   color: var(--accent);
 }
+
 .jellyfin-link {
   display: flex;
   align-items: center;
@@ -419,6 +598,7 @@ button:disabled {
   transition: color 0.2s, transform 0.2s;
   padding: 0.4rem;
 }
+
 .jellyfin-link:hover {
   color: var(--accent);
   transform: scale(1.1);

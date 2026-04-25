@@ -92,6 +92,7 @@ function App() {
   const [isSpeedExpanded, setIsSpeedExpanded] = useState(true)
   const [isLowPassExpanded, setIsLowPassExpanded] = useState(true)
   const [isPhaserExpanded, setIsPhaserExpanded] = useState(true)
+  const [queue, setQueue] = useState<JellyfinAudioItem[]>([])
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -319,6 +320,46 @@ function App() {
       phaserFeedback,
     })
   }, [phaserMinFreq, phaserMaxFreq, phaserRate, phaserDepth, phaserFeedback])
+
+  function addToQueue(track: JellyfinAudioItem): void {
+    setQueue((prev) => [...prev, track])
+    setStatus(`Added to queue: ${track.Name}`)
+  }
+
+  function removeFromQueue(index: number): void {
+    setQueue((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function handleSeek(delta: number): void {
+    const audio = audioRef.current
+    if (!audio) return
+    const newTime = Math.min(audio.duration, Math.max(0, audio.currentTime + delta))
+    audio.currentTime = newTime
+    setCurrentTime(newTime)
+  }
+
+  async function handleRestartOrPrev(): Promise<void> {
+    const audio = audioRef.current
+    if (!audio) return
+
+    if (audio.currentTime > 3) {
+      audio.currentTime = 0
+      setCurrentTime(0)
+    } else {
+      await handlePrevTrack()
+    }
+  }
+
+  async function playNextInQueue(): Promise<void> {
+    if (queue.length === 0) {
+      await handleNextTrack()
+      return
+    }
+
+    const nextTrack = queue[0]
+    setQueue((prev) => prev.slice(1))
+    await handleSelectTrack(nextTrack)
+  }
 
 
   useEffect(() => {
@@ -575,6 +616,11 @@ function App() {
   }
 
   async function handleNextTrack(): Promise<void> {
+    if (queue.length > 0) {
+      await playNextInQueue()
+      return
+    }
+
     const currentIndex = getSelectedIndex()
     if (currentIndex < 0 || currentIndex >= tracks.length - 1) {
       return
@@ -627,6 +673,11 @@ function App() {
   }
 
   async function handleTrackEnded(): Promise<void> {
+    if (queue.length > 0) {
+      await playNextInQueue()
+      return
+    }
+
     const currentIndex = getSelectedIndex()
     if (currentIndex < 0) {
       return
@@ -1015,29 +1066,45 @@ function App() {
             <small>{track.Artists?.join(', ') || track.Album || 'Unknown artist'}</small>
           </span>
           <span className="track-time">{duration}</span>
-          <a
-            href={buildWebUrl(serverUrl, track.Id, track.ServerId)}
-            target="_blank"
-            rel="noreferrer"
-            className="jellyfin-link"
-            onClick={(e) => e.stopPropagation()}
-            title="Open in Jellyfin"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="18"
-              height="18"
-              stroke="currentColor"
-              strokeWidth="2"
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          <div className="track-actions">
+            <button
+              type="button"
+              className="add-queue-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                addToQueue(track)
+              }}
+              title="Add to queue"
             >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+            <a
+              href={buildWebUrl(serverUrl, track.Id, track.ServerId)}
+              target="_blank"
+              rel="noreferrer"
+              className="jellyfin-link"
+              onClick={(e) => e.stopPropagation()}
+              title="Open in Jellyfin"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                stroke="currentColor"
+                strokeWidth="2"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+            </a>
+          </div>
         </motion.button>
       )
     })
@@ -1098,7 +1165,17 @@ function App() {
             <h2>Volume</h2>
 
             <label>
-              Global Volume ({Math.round(masterVolume * 100)}%)
+              <div className="label-header">
+                <span>Global Volume</span>
+                <input
+                  type="number"
+                  className="param-input"
+                  min="0"
+                  max="100"
+                  value={Math.round(masterVolume * 100)}
+                  onChange={(e) => setMasterVolume(Number(e.target.value) / 100)}
+                />
+              </div>
               <input
                 type="range"
                 min={0}
@@ -1109,15 +1186,98 @@ function App() {
               />
             </label>
 
-            <button
-              type="button"
-              onClick={() => {
-                void togglePlayback()
-              }}
-              disabled={!selectedTrack}
-            >
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
+            <div className="media-controls">
+              <button
+                type="button"
+                onClick={() => {
+                  void handleRestartOrPrev()
+                }}
+                disabled={!selectedTrack}
+                title="Previous / Restart"
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" /></svg>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSeek(-10)}
+                disabled={!selectedTrack}
+                title="Back 10s"
+                style={{ fontSize: '1.6rem', fontWeight: 'bold' }}
+              >
+                «
+              </button>
+
+              <button
+                type="button"
+                className="play-pause"
+                onClick={() => {
+                  void togglePlayback()
+                }}
+                disabled={!selectedTrack}
+                title={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? (
+                  <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M14 19h4V5h-4v14zm-8 0h4V5H6v14z" /></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ marginLeft: 4 }}><path d="M8 5v14l11-7z" /></svg>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSeek(10)}
+                disabled={!selectedTrack}
+                title="Forward 10s"
+                style={{ fontSize: '1.6rem', fontWeight: 'bold' }}
+              >
+                »
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  void handleNextTrack()
+                }}
+                disabled={!selectedTrack}
+                title="Next"
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" /></svg>
+              </button>
+            </div>
+
+            {queue.length > 0 && (
+              <div className="queue-panel">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                  </svg>
+                  Next in Queue ({queue.length})
+                </h3>
+                <div className="queue-list">
+                  {queue.map((track, i) => (
+                    <div key={`${track.Id}-${i}`} className="queue-item">
+                      <img src={buildImageUrl(serverUrl, track.Id, token)} alt="" />
+                      <div className="info">
+                        <div className="name">{track.Name}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="remove-btn"
+                        onClick={() => removeFromQueue(i)}
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="control-card">
@@ -1154,7 +1314,17 @@ function App() {
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
                   <label>
-                    Speed ({speedPercent}%)
+                    <div className="label-header">
+                      <span>Speed (%)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="60"
+                        max="160"
+                        value={speedPercent}
+                        onChange={(e) => setSpeedPercent(Number(e.target.value))}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={60}
@@ -1212,7 +1382,17 @@ function App() {
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
                   <label>
-                    Low-pass cutoff ({Math.round(lowPassFrequency)} Hz)
+                    <div className="label-header">
+                      <span>Low-pass cutoff (Hz)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="10"
+                        max="10000"
+                        value={Math.round(lowPassFrequency)}
+                        onChange={(e) => setLowPassFrequency(Number(e.target.value))}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={10}
@@ -1224,7 +1404,18 @@ function App() {
                   </label>
 
                   <label>
-                    Resonance / Q ({lowPassQ.toFixed(2)})
+                    <div className="label-header">
+                      <span>Resonance / Q</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="0.01"
+                        max="5"
+                        step="0.01"
+                        value={lowPassQ}
+                        onChange={(e) => setLowPassQ(Number(e.target.value))}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={0.01}
@@ -1276,7 +1467,17 @@ function App() {
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
                   <label>
-                    Min Frequency ({Math.round(phaserMinFreq)} Hz)
+                    <div className="label-header">
+                      <span>Min Frequency (Hz)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="10"
+                        max="20000"
+                        value={Math.round(phaserMinFreq)}
+                        onChange={(e) => setPhaserMinFreq(Number(e.target.value))}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={10}
@@ -1288,7 +1489,17 @@ function App() {
                   </label>
 
                   <label>
-                    Max Frequency ({Math.round(phaserMaxFreq)} Hz)
+                    <div className="label-header">
+                      <span>Max Frequency (Hz)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="10"
+                        max="20000"
+                        value={Math.round(phaserMaxFreq)}
+                        onChange={(e) => setPhaserMaxFreq(Number(e.target.value))}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={10}
@@ -1300,7 +1511,18 @@ function App() {
                   </label>
 
                   <label>
-                    Rate ({phaserRate.toFixed(2)} Hz)
+                    <div className="label-header">
+                      <span>Rate (Hz)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="0"
+                        max="10"
+                        step="0.01"
+                        value={phaserRate}
+                        onChange={(e) => setPhaserRate(Number(e.target.value))}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={0}
@@ -1312,7 +1534,17 @@ function App() {
                   </label>
 
                   <label>
-                    Depth ({Math.round(phaserDepth * 100)}%)
+                    <div className="label-header">
+                      <span>Depth (%)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="0"
+                        max="100"
+                        value={Math.round(phaserDepth * 100)}
+                        onChange={(e) => setPhaserDepth(Number(e.target.value) / 100)}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={0}
@@ -1324,16 +1556,27 @@ function App() {
                   </label>
 
                   <label>
-                    Feedback ({Math.round(phaserFeedback * 100)}%)
+                    <div className="label-header">
+                      <span>Feedback (%)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="0"
+                        max="100"
+                        value={Math.round(phaserFeedback * 100)}
+                        onChange={(e) => setPhaserFeedback(Number(e.target.value) / 100)}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={0}
-                      max={0.99}
+                      max={1}
                       step={0.01}
                       value={phaserFeedback}
                       onChange={(event) => setPhaserFeedback(Number(event.target.value))}
                     />
                   </label>
+
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1371,17 +1614,7 @@ function App() {
                 }}
                 disabled={!isAuthenticated || totalTrackCount === 0}
               >
-                Shuffle Carousel
-              </button>
-              <button
-                type="button"
-                className="ghost nav-btn"
-                onClick={() => {
-                  void handlePrevTrack()
-                }}
-                disabled={!selectedTrack || getSelectedIndex() <= 0}
-              >
-                Prev
+                Shuffle
               </button>
               <button
                 type="button"
@@ -1391,17 +1624,7 @@ function App() {
                 }}
                 disabled={!selectedTrack || tracks.length < 2}
               >
-                Random Jump
-              </button>
-              <button
-                type="button"
-                className="ghost nav-btn"
-                onClick={() => {
-                  void handleNextTrack()
-                }}
-                disabled={!selectedTrack || getSelectedIndex() >= tracks.length - 1}
-              >
-                Next
+                Random
               </button>
               <input
                 placeholder="Search tracks"
