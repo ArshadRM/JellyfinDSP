@@ -18,6 +18,12 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+*::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Webkit */
 }
 
 html,
@@ -35,6 +41,14 @@ body {
     radial-gradient(circle at 8% 10%, rgba(255, 159, 47, 0.2), transparent 32%),
     radial-gradient(circle at 90% 85%, rgba(128, 207, 255, 0.2), transparent 40%),
     linear-gradient(145deg, var(--bg-deep), var(--bg-mid) 62%, #18303f);
+  transition: background 0.8s ease-in-out;
+}
+
+body.is-fullscreen {
+  background:
+    radial-gradient(circle at 8% 10%, rgba(255, 159, 47, 0.05), transparent 32%),
+    radial-gradient(circle at 90% 85%, rgba(128, 207, 255, 0.05), transparent 40%),
+    linear-gradient(145deg, #05060a, #0a121d 62%, #0d1a24);
 }
 
 .shell {
@@ -65,13 +79,13 @@ body {
   width: 100vw;
   height: 100vh;
   z-index: 0;
-  opacity: 0.45;
+  opacity: 0.8;
   pointer-events: none;
   transition: opacity 0.5s ease;
 }
 
 .global-background-waveform.fullscreen-mode {
-  opacity: 0.85;
+  opacity: 0.95;
 }
 
 .panel {

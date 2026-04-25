@@ -781,7 +781,14 @@ function App() {
       return
     }
 
-    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+    // Use offsetX from native event if available (more reliable in some browsers)
+    // otherwise fallback to clientX - rect.left
+    const nativeEvent = event.nativeEvent as any
+    const offsetX = typeof nativeEvent.offsetX === 'number' 
+      ? nativeEvent.offsetX 
+      : (event.clientX - rect.left)
+
+    const ratio = Math.min(1, Math.max(0, offsetX / rect.width))
     handleScrub(ratio * duration)
   }
 
@@ -911,10 +918,8 @@ function App() {
       const hasData = engineRef.current.getWaveformData(waveformData)
 
       if (hasData) {
-        backgroundCtx.strokeStyle = isFullscreenActive 
-          ? 'rgba(215, 235, 255, 0.45)' 
-          : 'rgba(165, 186, 212, 0.18)'
-        backgroundCtx.lineWidth = isFullscreenActive ? 1.75 : 1.25
+        backgroundCtx.strokeStyle = 'rgba(215, 235, 255, 0.45)'
+        backgroundCtx.lineWidth = isFullscreenActive ? 1.75 : 1.35
         backgroundCtx.beginPath()
 
         for (let i = 0; i < waveformData.length; i += 1) {
@@ -971,6 +976,15 @@ function App() {
       document.removeEventListener('fullscreenchange', syncFullscreenState)
     }
   }, [])
+
+  useEffect(() => {
+    if (isFullscreenActive) {
+      document.body.classList.add('is-fullscreen')
+    } else {
+      document.body.classList.remove('is-fullscreen')
+    }
+    return () => document.body.classList.remove('is-fullscreen')
+  }, [isFullscreenActive])
 
   useEffect(() => {
     if (serverUrl) {
@@ -1503,7 +1517,7 @@ function App() {
                         max="320"
                         step="8"
                         value={transcodeBitrateKbps}
-                        onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
+                        onChange={(event) => setTranscodeBitrateKbps(Math.max(64, Math.min(320, Number(event.target.value))))}
                       />
                     </div>
                     <input
@@ -1659,7 +1673,7 @@ function App() {
                           min="10"
                           max="10000"
                           value={Math.round(lowPassFrequency)}
-                          onChange={(e) => setLowPassFrequency(Number(e.target.value))}
+                          onChange={(e) => setLowPassFrequency(Math.max(10, Math.min(10000, Number(e.target.value))))}
                         />
                       </div>
                     </div>

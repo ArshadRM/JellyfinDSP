@@ -180,7 +180,8 @@ export function Knob({
         }}
         onChange={(e) => {
           const val = Number(e.target.value)
-          onChange(label.includes('%') ? val / 100 : val)
+          const finalVal = label.includes('%') ? val / 100 : val
+          onChange(Math.max(min, Math.min(max, finalVal)))
         }}
       />
     </div>
