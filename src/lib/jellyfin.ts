@@ -255,29 +255,40 @@ export function buildStreamUrl(
   playSessionId?: string,
 ): string {
   const baseUrl = cleanUrl(serverUrl)
-  const maxStreamingBitrate = transcodingOptions?.maxStreamingBitrate ?? 320000
-  const container = transcodingOptions?.container ?? 'mp3'
-  const audioCodec = transcodingOptions?.audioCodec ?? container
-  const transcodingProtocol = transcodingOptions?.transcodingProtocol ?? 'http'
-  const audioChannels = transcodingOptions?.audioChannels ?? 2
 
+  // If Transcoding is explicitly requested
+  if (transcodingOptions) {
+    const params = new URLSearchParams({
+      UserId: userId,
+      DeviceId: APP_DEVICE_ID,
+      MaxStreamingBitrate: String(transcodingOptions.maxStreamingBitrate || 320000),
+      Container: transcodingOptions.container || 'mp3',
+      AudioCodec: transcodingOptions.audioCodec || transcodingOptions.container || 'mp3',
+      TranscodingContainer: transcodingOptions.container || 'mp3',
+      TranscodingProtocol: transcodingOptions.transcodingProtocol || 'http',
+      AudioBitRate: String(transcodingOptions.maxStreamingBitrate || 320000),
+      EnableAutoStreamCopy: 'false',
+      api_key: token,
+    })
+
+    if (playSessionId) {
+      params.set('PlaySessionId', playSessionId)
+    }
+
+    return `${baseUrl}/Audio/${itemId}/universal?${params.toString()}`
+  }
+
+  // Direct play fallback (Transcoding OFF)
   const params = new URLSearchParams({
-    UserId: userId,
-    DeviceId: APP_DEVICE_ID,
-    MaxStreamingBitrate: String(maxStreamingBitrate),
-    Container: container,
-    AudioCodec: audioCodec,
-    AudioChannels: String(audioChannels),
-    TranscodingProtocol: transcodingProtocol,
-    EnableAutoStreamCopy: 'true',
-    EnableAdaptiveBitrate: 'true',
     Static: 'true',
-    PlaySessionId: playSessionId ?? '',
     api_key: token,
-    Token: token,
   })
 
-  return `${baseUrl}/Audio/${itemId}/stream.${container}?${params.toString()}`
+  if (playSessionId) {
+    params.set('PlaySessionId', playSessionId)
+  }
+
+  return `${baseUrl}/Audio/${itemId}/stream?${params.toString()}`
 }
 
 export function buildImageUrl(
