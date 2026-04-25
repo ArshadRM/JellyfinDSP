@@ -2,6 +2,9 @@ import { animate, motion, AnimatePresence } from 'framer-motion'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { AudioEngine } from './lib/audioEngine'
+import { Knob } from './components/Knob'
+import { RangeSlider } from './components/RangeSlider'
+import { Transport } from './components/Transport'
 import {
   authenticate,
   buildImageUrl,
@@ -92,7 +95,34 @@ function App() {
   const [isSpeedExpanded, setIsSpeedExpanded] = useState(true)
   const [isLowPassExpanded, setIsLowPassExpanded] = useState(true)
   const [isPhaserExpanded, setIsPhaserExpanded] = useState(true)
-  const [queue, setQueue] = useState<JellyfinAudioItem[]>([])
+  const [isEelExpanded, setIsEelExpanded] = useState(true)
+  const [isEelEnabled, setIsEelEnabled] = useState(false)
+  const [eelFile, setEelFile] = useState<File | null>(null)
+  
+  const [queue, setQueue] = useState<JellyfinAudioItem[]>(() => {
+    const savedQueue = localStorage.getItem('jellyfindsp.queue')
+    const savedServer = localStorage.getItem('jellyfindsp.queueServerUrl')
+    
+    // Determine the current expected server URL from session
+    const currentServer = (() => {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        try {
+          return (JSON.parse(saved) as Session).serverUrl
+        } catch {}
+      }
+      return DEFAULT_SERVER_URL
+    })()
+
+    if (savedQueue && savedServer === currentServer) {
+      try {
+        return JSON.parse(savedQueue) as JellyfinAudioItem[]
+      } catch {
+        return []
+      }
+    }
+    return []
+  })
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -109,6 +139,7 @@ function App() {
   const scrubberPeakTasksRef = useRef<Record<string, Promise<void> | undefined>>({})
   const engineRef = useRef(new AudioEngine())
   const lastSearchIdRef = useRef(0)
+  const draggedItemRef = useRef<number | null>(null)
 
   async function buildSongIntensityPeaks(
     streamUrl: string,
@@ -502,6 +533,7 @@ function App() {
     setToken('')
     setUserId('')
     setTracks([])
+    setQueue([])
     setSelectedTrack(null)
     setRandomTargetId(null)
     setIsPlaying(false)
@@ -509,6 +541,8 @@ function App() {
     setDuration(0)
     setScrubberPeaks([])
     localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem('jellyfindsp.queue')
+    localStorage.removeItem('jellyfindsp.queueServerUrl')
     clearPreloadCache()
     clearBufferedTrackCache()
 
@@ -828,6 +862,24 @@ function App() {
       cancelAnimationFrame(rafId)
     }
   }, [])
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth <= 768) {
+        setMasterVolume(1);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    handleResize(); // trigger on mount
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (serverUrl) {
+      localStorage.setItem('jellyfindsp.queue', JSON.stringify(queue))
+      localStorage.setItem('jellyfindsp.queueServerUrl', serverUrl)
+    }
+  }, [queue, serverUrl])
 
   useEffect(() => {
     const scrubberCanvas = scrubberCanvasRef.current
@@ -1162,90 +1214,6 @@ function App() {
           <p className="status">{status}</p>
 
           <div className="control-card">
-            <h2>Volume</h2>
-
-            <label>
-              <div className="label-header">
-                <span>Global Volume</span>
-                <input
-                  type="number"
-                  className="param-input"
-                  min="0"
-                  max="100"
-                  value={Math.round(masterVolume * 100)}
-                  onChange={(e) => setMasterVolume(Number(e.target.value) / 100)}
-                />
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={masterVolume}
-                onChange={(event) => setMasterVolume(Number(event.target.value))}
-              />
-            </label>
-
-            <div className="media-controls">
-              <button
-                type="button"
-                onClick={() => {
-                  void handleRestartOrPrev()
-                }}
-                disabled={!selectedTrack}
-                title="Previous / Restart"
-              >
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" /></svg>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleSeek(-10)}
-                disabled={!selectedTrack}
-                title="Back 10s"
-                style={{ fontSize: '1.6rem', fontWeight: 'bold' }}
-              >
-                «
-              </button>
-
-              <button
-                type="button"
-                className="play-pause"
-                onClick={() => {
-                  void togglePlayback()
-                }}
-                disabled={!selectedTrack}
-                title={isPlaying ? 'Pause' : 'Play'}
-              >
-                {isPlaying ? (
-                  <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M14 19h4V5h-4v14zm-8 0h4V5H6v14z" /></svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ marginLeft: 4 }}><path d="M8 5v14l11-7z" /></svg>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleSeek(10)}
-                disabled={!selectedTrack}
-                title="Forward 10s"
-                style={{ fontSize: '1.6rem', fontWeight: 'bold' }}
-              >
-                »
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  void handleNextTrack()
-                }}
-                disabled={!selectedTrack}
-                title="Next"
-              >
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" /></svg>
-              </button>
-            </div>
-
             {queue.length > 0 && (
               <div className="queue-panel">
                 <h3>
@@ -1261,7 +1229,42 @@ function App() {
                 </h3>
                 <div className="queue-list">
                   {queue.map((track, i) => (
-                    <div key={`${track.Id}-${i}`} className="queue-item">
+                    <div 
+                      key={`${track.Id}-${i}`} 
+                      className="queue-item"
+                      draggable
+                      onDragStart={(e) => {
+                        draggedItemRef.current = i;
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault(); // Necessary to allow dropping
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const draggedIndex = draggedItemRef.current;
+                        if (draggedIndex === null || draggedIndex === i) return;
+                        setQueue(prev => {
+                          const newQueue = [...prev];
+                          const draggedItem = newQueue[draggedIndex];
+                          newQueue.splice(draggedIndex, 1);
+                          newQueue.splice(i, 0, draggedItem);
+                          return newQueue;
+                        });
+                        draggedItemRef.current = null;
+                      }}
+                    >
+                      <div className="drag-handle" style={{ cursor: 'grab', opacity: 0.5, padding: '0 4px' }}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                          <circle cx="9" cy="6" r="1.5"></circle>
+                          <circle cx="15" cy="6" r="1.5"></circle>
+                          <circle cx="9" cy="12" r="1.5"></circle>
+                          <circle cx="15" cy="12" r="1.5"></circle>
+                          <circle cx="9" cy="18" r="1.5"></circle>
+                          <circle cx="15" cy="18" r="1.5"></circle>
+                        </svg>
+                      </div>
                       <img src={buildImageUrl(serverUrl, track.Id, token)} alt="" />
                       <div className="info">
                         <div className="name">{track.Name}</div>
@@ -1313,36 +1316,26 @@ function App() {
                   exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
-                  <label>
-                    <div className="label-header">
-                      <span>Speed (%)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="60"
-                        max="160"
-                        value={speedPercent}
-                        onChange={(e) => setSpeedPercent(Number(e.target.value))}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={60}
-                      max={160}
-                      step={1}
-                      value={speedPercent}
-                      onChange={(event) => setSpeedPercent(Number(event.target.value))}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '0.5rem' }}>
+                    <Knob
+                      label="Speed %"
+                      value={speedPercent / 100}
+                      min={0.6}
+                      max={1.6}
+                      step={0.01}
+                      onChange={(val) => setSpeedPercent(val * 100)}
+                      onReset={() => setSpeedPercent(100)}
                     />
-                  </label>
 
-                  <label className="inline-switch">
-                    <input
-                      type="checkbox"
-                      checked={adjustPitch}
-                      onChange={(event) => setAdjustPitch(event.target.checked)}
-                    />
-                    Adjust Pitch
-                  </label>
+                    <label className="inline-switch">
+                      <input
+                        type="checkbox"
+                        checked={adjustPitch}
+                        onChange={(event) => setAdjustPitch(event.target.checked)}
+                      />
+                      Adjust Pitch
+                    </label>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1403,28 +1396,25 @@ function App() {
                     />
                   </label>
 
-                  <label>
-                    <div className="label-header">
-                      <span>Resonance / Q</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="0.01"
-                        max="5"
-                        step="0.01"
-                        value={lowPassQ}
-                        onChange={(e) => setLowPassQ(Number(e.target.value))}
-                      />
-                    </div>
-                    <input
-                      type="range"
+                  <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap' }}>
+                    <Knob
+                      label="Cutoff (Hz)"
+                      value={lowPassFrequency}
+                      min={10}
+                      max={10000}
+                      onChange={(val) => setLowPassFrequency(val)}
+                      onReset={() => setLowPassFrequency(55)}
+                    />
+                    <Knob
+                      label="Resonance"
+                      value={lowPassQ}
                       min={0.01}
                       max={5}
                       step={0.01}
-                      value={lowPassQ}
-                      onChange={(event) => setLowPassQ(Number(event.target.value))}
+                      onChange={(val) => setLowPassQ(val)}
+                      onReset={() => setLowPassQ(0.80)}
                     />
-                  </label>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1466,117 +1456,99 @@ function App() {
                   exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
-                  <label>
-                    <div className="label-header">
-                      <span>Min Frequency (Hz)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="10"
-                        max="20000"
-                        value={Math.round(phaserMinFreq)}
-                        onChange={(e) => setPhaserMinFreq(Number(e.target.value))}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={10}
-                      max={20000}
-                      step={1}
-                      value={phaserMinFreq}
-                      onChange={(event) => setPhaserMinFreq(Number(event.target.value))}
-                    />
-                  </label>
+                  <RangeSlider
+                    label="Frequency Range"
+                    min={10}
+                    max={20000}
+                    minVal={phaserMinFreq}
+                    maxVal={phaserMaxFreq}
+                    onChange={(vals) => {
+                      setPhaserMinFreq(vals.min);
+                      setPhaserMaxFreq(vals.max);
+                    }}
+                  />
 
-                  <label>
-                    <div className="label-header">
-                      <span>Max Frequency (Hz)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="10"
-                        max="20000"
-                        value={Math.round(phaserMaxFreq)}
-                        onChange={(e) => setPhaserMaxFreq(Number(e.target.value))}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={10}
-                      max={20000}
-                      step={1}
-                      value={phaserMaxFreq}
-                      onChange={(event) => setPhaserMaxFreq(Number(event.target.value))}
-                    />
-                  </label>
-
-                  <label>
-                    <div className="label-header">
-                      <span>Rate (Hz)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="0"
-                        max="10"
-                        step="0.01"
-                        value={phaserRate}
-                        onChange={(e) => setPhaserRate(Number(e.target.value))}
-                      />
-                    </div>
-                    <input
-                      type="range"
+                  <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', marginTop: '1rem' }}>
+                    <Knob
+                      label="Rate"
+                      value={phaserRate}
                       min={0}
                       max={10}
                       step={0.01}
-                      value={phaserRate}
-                      onChange={(event) => setPhaserRate(Number(event.target.value))}
+                      onChange={(val) => setPhaserRate(val)}
+                      onReset={() => setPhaserRate(0.5)}
                     />
-                  </label>
-
-                  <label>
-                    <div className="label-header">
-                      <span>Depth (%)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="0"
-                        max="100"
-                        value={Math.round(phaserDepth * 100)}
-                        onChange={(e) => setPhaserDepth(Number(e.target.value) / 100)}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
+                    <Knob
+                      label="Depth %"
                       value={phaserDepth}
-                      onChange={(event) => setPhaserDepth(Number(event.target.value))}
-                    />
-                  </label>
-
-                  <label>
-                    <div className="label-header">
-                      <span>Feedback (%)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="0"
-                        max="100"
-                        value={Math.round(phaserFeedback * 100)}
-                        onChange={(e) => setPhaserFeedback(Number(e.target.value) / 100)}
-                      />
-                    </div>
-                    <input
-                      type="range"
                       min={0}
                       max={1}
                       step={0.01}
+                      onChange={(val) => setPhaserDepth(val)}
+                      onReset={() => setPhaserDepth(1.0)}
+                    />
+                    <Knob
+                      label="Feedback %"
                       value={phaserFeedback}
-                      onChange={(event) => setPhaserFeedback(Number(event.target.value))}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      onChange={(val) => setPhaserFeedback(val)}
+                      onReset={() => setPhaserFeedback(0.7)}
+                    />
+                  </div>
+
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="control-card">
+            <div className={`menu-head ${isEelExpanded ? 'expanded' : ''}`}>
+              <h2 onClick={() => setIsEelExpanded((prev) => !prev)}>EEL Script (Experimental)</h2>
+              <div className="menu-actions">
+                <button
+                  type="button"
+                  className={isEelEnabled ? '' : 'off-btn'}
+                  onClick={() => setIsEelEnabled((prev) => !prev)}
+                >
+                  {isEelEnabled ? 'On' : 'Off'}
+                </button>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {isEelExpanded && (
+                <motion.div
+                  className="menu-content"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <label>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Upload JamesDSP .eel file</span>
+                    <input 
+                      type="file" 
+                      accept=".eel" 
+                      style={{ fontSize: '0.8rem', color: 'var(--text-dim)', width: '100%' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setEelFile(file);
+                          setIsEelEnabled(true);
+                        }
+                      }}
                     />
                   </label>
-
+                  {eelFile && (
+                    <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--accent)' }}>
+                      Loaded: {eelFile.name}
+                    </div>
+                  )}
+                  <div style={{ marginTop: '8px', fontSize: '0.75rem', color: 'rgba(255,100,100,0.8)' }}>
+                    Note: Native EEL compilation requires a WebAssembly module. This is a local session stub.
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1584,25 +1556,6 @@ function App() {
         </section>
 
         <section className="panel right-panel">
-          <div className="playback-strip">
-            <div className="playback-meta">
-              <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
-              <span>
-                {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
-              </span>
-            </div>
-            <canvas
-              ref={scrubberCanvasRef}
-              className="waveform-canvas"
-              onMouseDown={scrubFromPointer}
-              onMouseMove={(event) => {
-                if (event.buttons === 1) {
-                  scrubFromPointer(event)
-                }
-              }}
-            />
-          </div>
-
           <header className="library-head">
             <h2>Library Carousel</h2>
             <div className="library-actions">
@@ -1670,6 +1623,76 @@ function App() {
           />
         </section>
       </main>
+
+      <aside className="bottom-player-bar">
+        <div className="scrubber-container">
+          <canvas
+            ref={scrubberCanvasRef}
+            className="waveform-canvas touch-scrubber"
+            onMouseDown={scrubFromPointer}
+            onTouchStart={(e) => {
+              const touch = e.touches[0];
+              const fakeEvent = { clientX: touch.clientX, currentTarget: e.currentTarget } as unknown as React.MouseEvent;
+              scrubFromPointer(fakeEvent);
+            }}
+            onTouchMove={(e) => {
+              const touch = e.touches[0];
+              const fakeEvent = { clientX: touch.clientX, currentTarget: e.currentTarget } as unknown as React.MouseEvent;
+              scrubFromPointer(fakeEvent);
+            }}
+            onMouseMove={(event) => {
+              if (event.buttons === 1) {
+                scrubFromPointer(event)
+              }
+            }}
+          />
+        </div>
+        
+        <div className="player-bar-content">
+          <div className="player-left">
+            {selectedTrack && (
+              <>
+                <img 
+                  src={buildImageUrl(serverUrl, selectedTrack.Id, token)} 
+                  alt="" 
+                  className="player-album-art"
+                />
+                <div className="player-meta">
+                  <div className="player-track-name">{selectedTrack.Name}</div>
+                  <div className="player-artist-name">{selectedTrack.Artists?.join(', ') || selectedTrack.Album || 'Unknown artist'}</div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="player-center">
+            <Transport 
+              isPlaying={isPlaying}
+              onTogglePlay={() => { void togglePlayback() }}
+              onSeek={handleSeek}
+              onNext={() => { void handleNextTrack() }}
+              onPrev={() => { void handleRestartOrPrev() }}
+              disabled={!selectedTrack}
+            />
+            <div className="time-display">
+              {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
+            </div>
+          </div>
+
+          <div className="player-right">
+             <div className="player-volume">
+                <Knob
+                  label="Volume"
+                  value={masterVolume}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={(val) => setMasterVolume(val)}
+                />
+             </div>
+          </div>
+        </div>
+      </aside>
     </>
   )
 }
