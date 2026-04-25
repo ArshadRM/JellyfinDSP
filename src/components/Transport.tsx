@@ -34,7 +34,11 @@ export const Transport: React.FC<TransportProps> = ({
         disabled={disabled}
         title="Back 10s"
       >
-        <span className="seek-glyph" aria-hidden="true">⏪</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="seek-icon">
+          <path d="M3.5 11a9 9 0 1 0 .5 4" />
+          <polyline points="1.5 12 3.5 12 3.5 10" />
+          <text x="12" y="14.5" fontSize="7" fontFamily="Rajdhani, sans-serif" fontWeight="700" textAnchor="middle" fill="currentColor" stroke="none">10</text>
+        </svg>
       </button>
 
       <button 
@@ -56,7 +60,11 @@ export const Transport: React.FC<TransportProps> = ({
         disabled={disabled}
         title="Forward 10s"
       >
-        <span className="seek-glyph" aria-hidden="true">⏩</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="seek-icon">
+          <path d="M20.5 11a9 9 0 1 1-.5 4" />
+          <polyline points="22.5 12 20.5 12 20.5 10" />
+          <text x="12" y="14.5" fontSize="7" fontFamily="Rajdhani, sans-serif" fontWeight="700" textAnchor="middle" fill="currentColor" stroke="none">10</text>
+        </svg>
       </button>
 
       <button 

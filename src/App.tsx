@@ -18,6 +18,7 @@ import type { JellyfinTranscodingOptions } from './lib/jellyfin'
 
 const DEFAULT_SERVER_URL = 'https://watch.prnt.ink'
 const STORAGE_KEY = 'jellyfindsp.session'
+const SETTINGS_KEY = 'jellyfindsp.settings'
 
 type Session = {
   serverUrl: string
@@ -62,6 +63,16 @@ function shuffleItems(items: JellyfinAudioItem[]): JellyfinAudioItem[] {
   return next
 }
 
+const initialSettings = (() => {
+  const saved = localStorage.getItem(SETTINGS_KEY)
+  if (saved) {
+    try {
+      return JSON.parse(saved)
+    } catch {}
+  }
+  return {}
+})()
+
 function App() {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL)
   const [username, setUsername] = useState('Guest')
@@ -74,35 +85,35 @@ function App() {
   const [tracks, setTracks] = useState<JellyfinAudioItem[]>([])
   const [totalTrackCount, setTotalTrackCount] = useState(0)
   const [selectedTrack, setSelectedTrack] = useState<JellyfinAudioItem | null>(null)
-  const [masterVolume, setMasterVolume] = useState(1.00)
-  const [isSpeedEnabled, setIsSpeedEnabled] = useState(true)
-  const [speedPercent, setSpeedPercent] = useState(80)
-  const [adjustPitch, setAdjustPitch] = useState(true)
-  const [isLowPassEnabled, setIsLowPassEnabled] = useState(true)
-  const [lowPassFrequency, setLowPassFrequency] = useState(55)
-  const [lowPassQ, setLowPassQ] = useState(0.80)
+  const [masterVolume, setMasterVolume] = useState(initialSettings.masterVolume ?? 1.00)
+  const [isSpeedEnabled, setIsSpeedEnabled] = useState(initialSettings.isSpeedEnabled ?? true)
+  const [speedPercent, setSpeedPercent] = useState(initialSettings.speedPercent ?? 80)
+  const [adjustPitch, setAdjustPitch] = useState(initialSettings.adjustPitch ?? true)
+  const [isLowPassEnabled, setIsLowPassEnabled] = useState(initialSettings.isLowPassEnabled ?? true)
+  const [lowPassFrequency, setLowPassFrequency] = useState(initialSettings.lowPassFrequency ?? 55)
+  const [lowPassQ, setLowPassQ] = useState(initialSettings.lowPassQ ?? 0.80)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isPhaserEnabled, setIsPhaserEnabled] = useState(false)
-  const [phaserMinFreq, setPhaserMinFreq] = useState(440)
-  const [phaserMaxFreq, setPhaserMaxFreq] = useState(1600)
-  const [phaserRate, setPhaserRate] = useState(0.5)
-  const [phaserDepth, setPhaserDepth] = useState(1.0)
-  const [phaserFeedback, setPhaserFeedback] = useState(0.7)
+  const [isPhaserEnabled, setIsPhaserEnabled] = useState(initialSettings.isPhaserEnabled ?? false)
+  const [phaserMinFreq, setPhaserMinFreq] = useState(initialSettings.phaserMinFreq ?? 440)
+  const [phaserMaxFreq, setPhaserMaxFreq] = useState(initialSettings.phaserMaxFreq ?? 1600)
+  const [phaserRate, setPhaserRate] = useState(initialSettings.phaserRate ?? 0.5)
+  const [phaserDepth, setPhaserDepth] = useState(initialSettings.phaserDepth ?? 1.0)
+  const [phaserFeedback, setPhaserFeedback] = useState(initialSettings.phaserFeedback ?? 0.7)
   const [randomTargetId, setRandomTargetId] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [scrubberPeaks, setScrubberPeaks] = useState<number[]>([])
   const [hasInitialShuffleLoaded, setHasInitialShuffleLoaded] = useState(false)
-  const [isSpeedExpanded, setIsSpeedExpanded] = useState(true)
-  const [isLowPassExpanded, setIsLowPassExpanded] = useState(true)
-  const [isPhaserExpanded, setIsPhaserExpanded] = useState(true)
-  const [isQueueExpanded, setIsQueueExpanded] = useState(true)
-  const [isTranscodingExpanded, setIsTranscodingExpanded] = useState(true)
-  const [isTranscodingEnabled, setIsTranscodingEnabled] = useState(false)
-  const [transcodeBitrateKbps, setTranscodeBitrateKbps] = useState(192)
-  const [transcodeContainer, setTranscodeContainer] = useState<'mp3' | 'aac' | 'opus'>('mp3')
-  const [transcodeProtocol, setTranscodeProtocol] = useState<'http' | 'hls'>('http')
-  const [transcodeChannels, setTranscodeChannels] = useState<1 | 2>(2)
+  const [isSpeedExpanded, setIsSpeedExpanded] = useState(initialSettings.isSpeedExpanded ?? true)
+  const [isLowPassExpanded, setIsLowPassExpanded] = useState(initialSettings.isLowPassExpanded ?? true)
+  const [isPhaserExpanded, setIsPhaserExpanded] = useState(initialSettings.isPhaserExpanded ?? true)
+  const [isQueueExpanded, setIsQueueExpanded] = useState(initialSettings.isQueueExpanded ?? true)
+  const [isTranscodingExpanded, setIsTranscodingExpanded] = useState(initialSettings.isTranscodingExpanded ?? true)
+  const [isTranscodingEnabled, setIsTranscodingEnabled] = useState(initialSettings.isTranscodingEnabled ?? false)
+  const [transcodeBitrateKbps, setTranscodeBitrateKbps] = useState(initialSettings.transcodeBitrateKbps ?? 192)
+  const [transcodeContainer, setTranscodeContainer] = useState<'mp3' | 'aac' | 'opus'>(initialSettings.transcodeContainer ?? 'mp3')
+  const [transcodeProtocol, setTranscodeProtocol] = useState<'http' | 'hls'>(initialSettings.transcodeProtocol ?? 'http')
+  const [transcodeChannels, setTranscodeChannels] = useState<1 | 2>(initialSettings.transcodeChannels ?? 2)
   const [isVolumeHidden, setIsVolumeHidden] = useState(false)
   const [isFullscreenActive, setIsFullscreenActive] = useState(false)
   
@@ -900,8 +911,10 @@ function App() {
       const hasData = engineRef.current.getWaveformData(waveformData)
 
       if (hasData) {
-        backgroundCtx.strokeStyle = 'rgba(165, 186, 212, 0.18)'
-        backgroundCtx.lineWidth = 1.25
+        backgroundCtx.strokeStyle = isFullscreenActive 
+          ? 'rgba(215, 235, 255, 0.45)' 
+          : 'rgba(165, 186, 212, 0.18)'
+        backgroundCtx.lineWidth = isFullscreenActive ? 1.75 : 1.25
         backgroundCtx.beginPath()
 
         for (let i = 0; i < waveformData.length; i += 1) {
@@ -926,7 +939,7 @@ function App() {
     return () => {
       cancelAnimationFrame(rafId)
     }
-  }, [])
+  }, [isFullscreenActive])
 
   useEffect(() => {
     const volumeHideBreakpoint = 1160
@@ -965,6 +978,59 @@ function App() {
       localStorage.setItem('jellyfindsp.queueServerUrl', serverUrl)
     }
   }, [queue, serverUrl])
+
+  useEffect(() => {
+    const settings = {
+      masterVolume,
+      isSpeedEnabled,
+      speedPercent,
+      adjustPitch,
+      isLowPassEnabled,
+      lowPassFrequency,
+      lowPassQ,
+      isPhaserEnabled,
+      phaserMinFreq,
+      phaserMaxFreq,
+      phaserRate,
+      phaserDepth,
+      phaserFeedback,
+      isSpeedExpanded,
+      isLowPassExpanded,
+      isPhaserExpanded,
+      isQueueExpanded,
+      isTranscodingExpanded,
+      isTranscodingEnabled,
+      transcodeBitrateKbps,
+      transcodeContainer,
+      transcodeProtocol,
+      transcodeChannels,
+    }
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  }, [
+    masterVolume,
+    isSpeedEnabled,
+    speedPercent,
+    adjustPitch,
+    isLowPassEnabled,
+    lowPassFrequency,
+    lowPassQ,
+    isPhaserEnabled,
+    phaserMinFreq,
+    phaserMaxFreq,
+    phaserRate,
+    phaserDepth,
+    phaserFeedback,
+    isSpeedExpanded,
+    isLowPassExpanded,
+    isPhaserExpanded,
+    isQueueExpanded,
+    isTranscodingExpanded,
+    isTranscodingEnabled,
+    transcodeBitrateKbps,
+    transcodeContainer,
+    transcodeProtocol,
+    transcodeChannels,
+  ])
 
   useEffect(() => {
     const scrubberCanvas = scrubberCanvasRef.current
@@ -1261,7 +1327,10 @@ function App() {
 
   return (
     <>
-      <canvas ref={backgroundWaveformRef} className="global-background-waveform" />
+      <canvas 
+        ref={backgroundWaveformRef} 
+        className={`global-background-waveform ${isFullscreenActive ? 'fullscreen-mode' : ''}`} 
+      />
       <main className={`shell ${isFullscreenActive ? 'fullscreen-hidden' : ''}`}>
         <section className="panel left-panel" ref={leftPanelRef}>
           <h1>JellyfinDSP</h1>
@@ -1435,7 +1504,6 @@ function App() {
                         step="8"
                         value={transcodeBitrateKbps}
                         onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
-                        disabled={!isTranscodingEnabled}
                       />
                     </div>
                     <input
@@ -1445,7 +1513,6 @@ function App() {
                       step={8}
                       value={transcodeBitrateKbps}
                       onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
-                      disabled={!isTranscodingEnabled}
                     />
                   </label>
 
@@ -1454,7 +1521,6 @@ function App() {
                     <select
                       value={transcodeContainer}
                       onChange={(event) => setTranscodeContainer(event.target.value as 'mp3' | 'aac' | 'opus')}
-                      disabled={!isTranscodingEnabled}
                     >
                       <option value="mp3">MP3</option>
                       <option value="aac">AAC</option>
@@ -1467,7 +1533,6 @@ function App() {
                     <select
                       value={transcodeProtocol}
                       onChange={(event) => setTranscodeProtocol(event.target.value as 'http' | 'hls')}
-                      disabled={!isTranscodingEnabled}
                     >
                       <option value="http">HTTP</option>
                       <option value="hls">HLS</option>
@@ -1479,7 +1544,6 @@ function App() {
                     <select
                       value={transcodeChannels}
                       onChange={(event) => setTranscodeChannels(Number(event.target.value) as 1 | 2)}
-                      disabled={!isTranscodingEnabled}
                     >
                       <option value={1}>Mono</option>
                       <option value={2}>Stereo</option>

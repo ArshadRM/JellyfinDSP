@@ -67,6 +67,11 @@ body {
   z-index: 0;
   opacity: 0.45;
   pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+.global-background-waveform.fullscreen-mode {
+  opacity: 0.85;
 }
 
 .panel {
@@ -320,8 +325,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .seek-icon {
   width: 24px;
   height: 24px;
-  filter: invert(1) brightness(0.8);
-  transition: filter 0.2s ease;
+  transition: all 0.2s ease;
 }
 
 .seek-glyph {
