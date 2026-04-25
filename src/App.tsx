@@ -304,7 +304,7 @@ function App() {
     }
 
     return {
-      maxStreamingBitrate: Math.max(64000, Math.floor(transcodeBitrateKbps * 1000)),
+      maxStreamingBitrate: Math.max(4000, Math.floor(transcodeBitrateKbps * 1000)),
       container: transcodeContainer,
       audioCodec: transcodeContainer,
       transcodingProtocol: transcodeProtocol,
@@ -792,7 +792,7 @@ function App() {
     await playTrackAtIndex(nextIndex)
   }
 
-  function scrubFromPointer(event: ReactMouseEvent<HTMLCanvasElement>): void {
+  function scrubFromPointer(event: ReactMouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): void {
     if (!selectedTrack || duration <= 0) {
       return
     }
@@ -802,13 +802,14 @@ function App() {
       return
     }
 
-    // Use offsetX from native event if available (more reliable in some browsers)
-    // otherwise fallback to clientX - rect.left
-    const nativeEvent = event.nativeEvent as any
-    const offsetX = typeof nativeEvent.offsetX === 'number' 
-      ? nativeEvent.offsetX 
-      : (event.clientX - rect.left)
+    let clientX = 0
+    if ('touches' in event) {
+      clientX = event.touches[0].clientX
+    } else {
+      clientX = (event as ReactMouseEvent).clientX
+    }
 
+    const offsetX = clientX - rect.left
     const ratio = Math.min(1, Math.max(0, offsetX / rect.width))
     handleScrub(ratio * duration)
   }
@@ -1436,7 +1437,7 @@ function App() {
                     transition={{ duration: 0.2, ease: 'easeOut' }}
                   >
                     {queue.length === 0 ? (
-                      <div className="empty-state">Norhing in Queue</div>
+                      <div className="empty-state">Nothing in Queue</div>
                     ) : (
                       <div className="queue-list">
                         {queue.map((track, i) => (
@@ -1538,18 +1539,18 @@ function App() {
                       <input
                         type="number"
                         className="param-input"
-                        min="64"
+                        min="4"
                         max="320"
-                        step="8"
+                        step="4"
                         value={transcodeBitrateKbps}
-                        onChange={(event) => setTranscodeBitrateKbps(Math.max(64, Math.min(320, Number(event.target.value))))}
+                        onChange={(event) => setTranscodeBitrateKbps(Math.max(4, Math.min(320, Number(event.target.value))))}
                       />
                     </div>
                     <input
                       type="range"
-                      min={64}
+                      min={4}
                       max={320}
-                      step={8}
+                      step={4}
                       value={transcodeBitrateKbps}
                       onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
                     />
@@ -1792,7 +1793,7 @@ function App() {
                       value={phaserRate}
                       min={0}
                       max={10}
-                      step={0.01}
+                      step={0.1}
                       onChange={(val) => setPhaserRate(val)}
                       onReset={() => setPhaserRate(0.5)}
                     />
@@ -1835,28 +1836,12 @@ function App() {
               className="waveform-canvas"
               onMouseDown={scrubFromPointer}
               onTouchStart={(event) => {
-                const touch = event.touches[0]
-                if (!touch) {
-                  return
-                }
-
-                const fakeEvent = {
-                  clientX: touch.clientX,
-                  currentTarget: event.currentTarget,
-                } as unknown as ReactMouseEvent<HTMLCanvasElement>
-                scrubFromPointer(fakeEvent)
+                event.preventDefault()
+                scrubFromPointer(event)
               }}
               onTouchMove={(event) => {
-                const touch = event.touches[0]
-                if (!touch) {
-                  return
-                }
-
-                const fakeEvent = {
-                  clientX: touch.clientX,
-                  currentTarget: event.currentTarget,
-                } as unknown as ReactMouseEvent<HTMLCanvasElement>
-                scrubFromPointer(fakeEvent)
+                event.preventDefault()
+                scrubFromPointer(event)
               }}
               onMouseMove={(event) => {
                 if (event.buttons === 1) {

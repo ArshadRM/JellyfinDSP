@@ -22,9 +22,19 @@ export function Knob({
   horizontalSwipe = true,
 }: KnobProps) {
   const [isDragging, setIsDragging] = useState(false)
+  const [isFocused, setIsFocused] = useState(false)
+  const [inputValue, setInputValue] = useState('')
   const dragMode = useRef<'linear' | 'horizontal' | 'circular' | null>(null)
   const knobRef = useRef<HTMLDivElement>(null)
-  
+
+  // Sync internal input value with external value prop, but only when not focused
+  useEffect(() => {
+    if (!isFocused) {
+      const displayValue = label.includes('%') ? Math.round(value * 100) : Number(value.toFixed(2))
+      setInputValue(displayValue.toString())
+    }
+  }, [value, isFocused, label])
+
   const startPos = useRef({ x: 0, y: 0 })
   const prevX = useRef(0)
   const prevY = useRef(0)
@@ -64,6 +74,55 @@ export function Knob({
     prevAngle.current = getCssAngle(e.clientX, e.clientY)
   }
 
+  const quantize = (val: number) => {
+    const clamped = Math.max(min, Math.min(max, val))
+    if (!step) return clamped
+    const stepped = Math.round(clamped / step) * step
+    return parseFloat(stepped.toFixed(10))
+  }
+
+  const commitValue = (raw: string) => {
+    const val = Number(raw)
+    if (isNaN(val)) {
+      // Revert to current value
+      const displayValue = label.includes('%') ? Math.round(value * 100) : Number(value.toFixed(2))
+      setInputValue(displayValue.toString())
+      return
+    }
+    const finalVal = label.includes('%') ? val / 100 : val
+    onChange(quantize(finalVal))
+    // Reset local value to formatted version
+    const nextVal = quantize(finalVal)
+    const displayValue = label.includes('%') ? Math.round(nextVal * 100) : Number(nextVal.toFixed(2))
+    setInputValue(displayValue.toString())
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    let multiplier = e.shiftKey ? 10 : 1
+    const stepSize = step || (max - min) / 100
+    
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      const nextVal = quantize(value + stepSize * multiplier)
+      const displayValue = label.includes('%') ? Math.round(nextVal * 100) : Number(nextVal.toFixed(2))
+      setInputValue(displayValue.toString())
+      onChange(nextVal)
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+      e.preventDefault()
+      const nextVal = quantize(value - stepSize * multiplier)
+      const displayValue = label.includes('%') ? Math.round(nextVal * 100) : Number(nextVal.toFixed(2))
+      setInputValue(displayValue.toString())
+      onChange(nextVal)
+    } else if (e.key === 'Enter') {
+      commitValue(inputValue)
+      if (knobRef.current) knobRef.current.focus()
+    } else if (e.key === 'Escape') {
+      const displayValue = label.includes('%') ? Math.round(value * 100) : Number(value.toFixed(2))
+      setInputValue(displayValue.toString())
+      if (knobRef.current) knobRef.current.focus()
+    }
+  }
+
   useEffect(() => {
     if (!isDragging) return
 
@@ -87,15 +146,17 @@ export function Knob({
 
       if (dragMode.current === 'linear') {
         const deltaY = e.clientY - prevY.current
-        const sensitivity = 0.5 * (max - min) / 100 // Scale sensitivity to range
+        const sensitivity = 0.5 * (max - min) / 100
         const newValue = value - (deltaY * sensitivity)
-        onChange(Math.max(min, Math.min(max, newValue)))
+        const nextVal = quantize(newValue)
+        onChange(nextVal)
         prevY.current = e.clientY
       } else if (dragMode.current === 'horizontal') {
         const deltaX = e.clientX - prevX.current
         const sensitivity = 0.5 * (max - min) / 100
         const newValue = value + (deltaX * sensitivity)
-        onChange(Math.max(min, Math.min(max, newValue)))
+        const nextVal = quantize(newValue)
+        onChange(nextVal)
         prevX.current = e.clientX
       } else if (dragMode.current === 'circular') {
         const currentAngle = getCssAngle(e.clientX, e.clientY)
@@ -105,7 +166,8 @@ export function Knob({
         if (deltaAngle < -180) deltaAngle += 360
 
         const valueChange = (deltaAngle / ANGLE_RANGE) * (max - min)
-        onChange(Math.max(min, Math.min(max, value + valueChange)))
+        const nextVal = quantize(value + valueChange)
+        onChange(nextVal)
         prevAngle.current = currentAngle
       }
     }
@@ -121,31 +183,39 @@ export function Knob({
       document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
     }
-  }, [isDragging, min, max, value, onChange])
+  }, [isDragging, min, max, value, onChange, step, horizontalSwipe])
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault()
     e.stopPropagation()
     
-    // Sensitivity tuning: adjust based on step or total range
     const stepSize = step || (max - min) / 100
     const change = e.deltaY > 0 ? -stepSize : stepSize
     
-    onChange(Math.max(min, Math.min(max, value + change * 2)))
+    const nextVal = quantize(value + change)
+    const displayValue = label.includes('%') ? Math.round(nextVal * 100) : Number(nextVal.toFixed(2))
+    setInputValue(displayValue.toString())
+    onChange(nextVal)
   }
 
   const percentage = (value - min) / (max - min)
   const angle = MIN_ANGLE + (percentage * ANGLE_RANGE)
   const dashOffset = SVG_DASH_MAX - (percentage * SVG_DASH_MAX)
 
+  useEffect(() => {
+    const container = knobRef.current?.closest('.knob-container') as HTMLElement | null
+    if (!container) return
+
+    const preventScroll = (e: Event) => {
+      e.preventDefault()
+    }
+
+    container.addEventListener('wheel', preventScroll, { passive: false })
+    return () => container.removeEventListener('wheel', preventScroll)
+  }, [])
+
   return (
-    <div
-      className="knob-container"
-      onWheel={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      }}
-    >
+    <div className="knob-container">
       <span className="knob-label">{label}</span>
       <div className="knob-wrapper">
         <svg className="knob-ring" viewBox="0 0 100 100">
@@ -161,27 +231,37 @@ export function Knob({
         <div 
           className="knob" 
           ref={knobRef}
+          tabIndex={0}
           onPointerDown={handlePointerDown}
           onDoubleClick={onReset}
           onWheel={handleWheel}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           style={{ transform: `rotate(${angle}deg)` }}
         >
           <div className="knob-indicator"></div>
         </div>
       </div>
       <input 
-        type="number" 
-        className="knob-input param-input" 
-        step="any"
-        value={label.includes('%') ? Math.round(value * 100) : Number(value.toFixed(2))} 
+        type="text" 
+        className="knob-input param-input"
+        value={inputValue}
+        onFocus={(e) => {
+          setIsFocused(true)
+          e.currentTarget.select()
+        }}
+        onBlur={() => {
+          setIsFocused(false)
+          commitValue(inputValue)
+        }}
         onWheel={(e) => {
           e.preventDefault()
           e.stopPropagation()
         }}
+        onKeyDown={handleKeyDown}
         onChange={(e) => {
-          const val = Number(e.target.value)
-          const finalVal = label.includes('%') ? val / 100 : val
-          onChange(Math.max(min, Math.min(max, finalVal)))
+          setInputValue(e.target.value)
         }}
       />
     </div>
