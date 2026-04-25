@@ -252,6 +252,7 @@ export function buildStreamUrl(
   token: string,
   userId: string,
   transcodingOptions?: JellyfinTranscodingOptions,
+  playSessionId?: string,
 ): string {
   const baseUrl = cleanUrl(serverUrl)
   const maxStreamingBitrate = transcodingOptions?.maxStreamingBitrate ?? 320000
@@ -270,10 +271,13 @@ export function buildStreamUrl(
     TranscodingProtocol: transcodingProtocol,
     EnableAutoStreamCopy: 'true',
     EnableAdaptiveBitrate: 'true',
+    Static: 'true',
+    PlaySessionId: playSessionId ?? '',
     api_key: token,
+    Token: token,
   })
 
-  return `${baseUrl}/Audio/${itemId}/universal?${params.toString()}`
+  return `${baseUrl}/Audio/${itemId}/stream.${container}?${params.toString()}`
 }
 
 export function buildImageUrl(

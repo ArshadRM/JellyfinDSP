@@ -173,7 +173,12 @@ function App() {
       }
     })
     if (!response.ok) {
-      throw new Error(`Waveform fetch failed (${response.status})`)
+      let details = 'No additional info'
+      try {
+        details = await response.text()
+      } catch {}
+      console.error(`Jellyfin Waveform Error (${response.status}):`, details)
+      throw new Error(`Waveform fetch failed (${response.status}): ${details}`)
     }
 
     const payload = await response.arrayBuffer()
@@ -232,7 +237,8 @@ function App() {
 
     const task = (async () => {
       try {
-        const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
+        const sid = Math.random().toString(36).substring(2, 10)
+        const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions, sid)
         const response = await fetch(streamUrl, {
           headers: {
             'X-Emby-Token': token,
@@ -240,6 +246,8 @@ function App() {
           }
         })
         if (!response.ok) {
+          const details = await response.text().catch(() => 'N/A')
+          console.warn(`Buffer Fetch Failed for ${trackId}:`, details)
           return
         }
 
@@ -618,7 +626,8 @@ function App() {
       return
     }
 
-    const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions)
+    const sid = Math.random().toString(36).substring(2, 10)
+    const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions, sid)
     setSelectedTrack(track)
     expectedDurationRef.current = msFromTicks(track.RunTimeTicks) / 1000
     setDuration(expectedDurationRef.current)
@@ -1151,53 +1160,57 @@ function App() {
     }
 
     const keepIds = new Set<string>()
+    const preloadTimer = window.setTimeout(() => {
+      // Only preload the NEXT track (+1) for gapless support and the random target
+      for (let offset = 1; offset <= 1; offset += 1) {
+        const track = tracks[currentIndex + offset]
+        if (!track) {
+          continue
+        }
 
-    for (let offset = -2; offset <= 2; offset += 1) {
-      const track = tracks[currentIndex + offset]
-      if (!track) {
-        continue
+        keepIds.add(track.Id)
+
+        if (!preloadAudioCacheRef.current[track.Id]) {
+          const preloadAudio = new Audio()
+          preloadAudio.preload = 'auto'
+          preloadAudio.src =
+            bufferedTrackUrlCacheRef.current[track.Id] ??
+            buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions)
+          preloadAudio.load()
+          preloadAudioCacheRef.current[track.Id] = preloadAudio
+        }
+
+        void ensureTrackBuffered(track.Id)
+        void ensureWaveformCached(track.Id)
       }
 
-      keepIds.add(track.Id)
+      if (randomTargetId) {
+        keepIds.add(randomTargetId)
+        if (!preloadAudioCacheRef.current[randomTargetId]) {
+          const preloadAudio = new Audio()
+          preloadAudio.preload = 'auto'
+          preloadAudio.src =
+            bufferedTrackUrlCacheRef.current[randomTargetId] ??
+            buildStreamUrl(serverUrl, randomTargetId, token, userId, transcodingOptions)
+          preloadAudio.load()
+          preloadAudioCacheRef.current[randomTargetId] = preloadAudio
+        }
 
-      if (!preloadAudioCacheRef.current[track.Id]) {
-        const preloadAudio = new Audio()
-        preloadAudio.preload = 'auto'
-        preloadAudio.src =
-          bufferedTrackUrlCacheRef.current[track.Id] ??
-          buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions)
-        preloadAudio.load()
-        preloadAudioCacheRef.current[track.Id] = preloadAudio
+        void ensureTrackBuffered(randomTargetId)
+        void ensureWaveformCached(randomTargetId)
       }
 
-      void ensureTrackBuffered(track.Id)
-      void ensureWaveformCached(track.Id)
-    }
-
-    if (randomTargetId) {
-      keepIds.add(randomTargetId)
-      if (!preloadAudioCacheRef.current[randomTargetId]) {
-        const preloadAudio = new Audio()
-        preloadAudio.preload = 'auto'
-        preloadAudio.src =
-          bufferedTrackUrlCacheRef.current[randomTargetId] ??
-          buildStreamUrl(serverUrl, randomTargetId, token, userId, transcodingOptions)
-        preloadAudio.load()
-        preloadAudioCacheRef.current[randomTargetId] = preloadAudio
+      for (const [id, cachedAudio] of Object.entries(preloadAudioCacheRef.current)) {
+        if (keepIds.has(id) || !cachedAudio) {
+          continue
+        }
+        cachedAudio.pause()
+        cachedAudio.removeAttribute('src')
+        delete preloadAudioCacheRef.current[id]
       }
+    }, 1000)
 
-      void ensureTrackBuffered(randomTargetId)
-      void ensureWaveformCached(randomTargetId)
-    }
-
-    for (const [id, cachedAudio] of Object.entries(preloadAudioCacheRef.current)) {
-      if (keepIds.has(id) || !cachedAudio) {
-        continue
-      }
-      cachedAudio.pause()
-      cachedAudio.removeAttribute('src')
-      delete preloadAudioCacheRef.current[id]
-    }
+    return () => window.clearTimeout(preloadTimer)
   }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token, userId, transcodingOptions])
 
   useEffect(() => {
