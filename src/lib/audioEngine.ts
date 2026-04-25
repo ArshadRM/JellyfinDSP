@@ -252,6 +252,10 @@ export class AudioEngine {
     }
 
     if (!this.workletLoaded) {
+      if (!this.context.audioWorklet) {
+        console.error('AudioWorklet is not available. This app requires a secure context (HTTPS) for audio effects.')
+        return
+      }
       const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
       const url = URL.createObjectURL(blob)
       await this.context.audioWorklet.addModule(url)
@@ -267,9 +271,13 @@ export class AudioEngine {
       this.monoToStereoNode = this.context.createChannelMerger(2)
       this.lowPassMixNode = this.context.createGain()
       this.masterGainNode = this.context.createGain()
-      this.phaserNode = new AudioWorkletNode(this.context, 'phaser-worklet', {
-        outputChannelCount: [2]
-      })
+
+      if (this.workletLoaded) {
+        this.phaserNode = new AudioWorkletNode(this.context, 'phaser-worklet', {
+          outputChannelCount: [2]
+        })
+      }
+
       this.analyserNode = this.context.createAnalyser()
 
       this.lowPassFrequency = options.lowPassFrequency
@@ -297,8 +305,14 @@ export class AudioEngine {
       this.splitterNode.connect(this.monoSumNode, 1, 0)
       this.monoToStereoNode.connect(this.lowPassMixNode)
       this.lowPassMixNode.connect(this.masterGainNode)
-      this.masterGainNode.connect(this.phaserNode)
-      this.phaserNode.connect(this.analyserNode)
+      
+      if (this.phaserNode) {
+        this.masterGainNode.connect(this.phaserNode)
+        this.phaserNode.connect(this.analyserNode)
+      } else {
+        this.masterGainNode.connect(this.analyserNode)
+      }
+
       this.analyserNode.connect(this.context.destination)
 
       this.reconnectGraph()

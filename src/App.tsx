@@ -7,6 +7,7 @@ import { RangeSlider } from './components/RangeSlider'
 import { Transport } from './components/Transport'
 import {
   authenticate,
+  authHeader,
   buildImageUrl,
   buildStreamUrl,
   buildWebUrl,
@@ -163,8 +164,14 @@ function App() {
 
   async function buildSongIntensityPeaks(
     streamUrl: string,
+    authToken: string,
   ): Promise<number[]> {
-    const response = await fetch(streamUrl)
+    const response = await fetch(streamUrl, {
+      headers: {
+        'X-Emby-Token': authToken,
+        'X-Emby-Authorization': authHeader(authToken),
+      }
+    })
     if (!response.ok) {
       throw new Error(`Waveform fetch failed (${response.status})`)
     }
@@ -226,7 +233,12 @@ function App() {
     const task = (async () => {
       try {
         const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
-        const response = await fetch(streamUrl)
+        const response = await fetch(streamUrl, {
+          headers: {
+            'X-Emby-Token': token,
+            'X-Emby-Authorization': authHeader(token),
+          }
+        })
         if (!response.ok) {
           return
         }
@@ -259,7 +271,7 @@ function App() {
 
         const streamUrl =
           bufferedUrl ?? buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
-        const peaks = await buildSongIntensityPeaks(streamUrl)
+        const peaks = await buildSongIntensityPeaks(streamUrl, token)
         scrubberPeakCacheRef.current[trackId] = peaks
       } finally {
         delete scrubberPeakTasksRef.current[trackId]

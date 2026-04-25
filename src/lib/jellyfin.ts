@@ -48,7 +48,7 @@ function cleanUrl(serverUrl: string): string {
   return serverUrl.trim().replace(/\/$/, '')
 }
 
-function authHeader(token?: string): string {
+export function authHeader(token?: string): string {
   const tokenPart = token ? `, Token="${token}"` : ''
   return `MediaBrowser Client="${APP_CLIENT}", Device="${APP_DEVICE}", DeviceId="${APP_DEVICE_ID}", Version="${APP_VERSION}"${tokenPart}`
 }
@@ -268,6 +268,8 @@ export function buildStreamUrl(
     AudioCodec: audioCodec,
     AudioChannels: String(audioChannels),
     TranscodingProtocol: transcodingProtocol,
+    EnableAutoStreamCopy: 'true',
+    EnableAdaptiveBitrate: 'true',
     api_key: token,
   })
 
