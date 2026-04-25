@@ -31,6 +31,14 @@ export type FetchAudioLibraryOptions = {
   limit?: number
 }
 
+export type JellyfinTranscodingOptions = {
+  maxStreamingBitrate?: number
+  container?: string
+  audioCodec?: string
+  transcodingProtocol?: 'http' | 'hls'
+  audioChannels?: number
+}
+
 const APP_CLIENT = 'JellyfinDSP'
 const APP_DEVICE = 'Web Browser'
 const APP_DEVICE_ID = 'jellyfindsp-web'
@@ -243,16 +251,23 @@ export function buildStreamUrl(
   itemId: string,
   token: string,
   userId: string,
+  transcodingOptions?: JellyfinTranscodingOptions,
 ): string {
   const baseUrl = cleanUrl(serverUrl)
+  const maxStreamingBitrate = transcodingOptions?.maxStreamingBitrate ?? 320000
+  const container = transcodingOptions?.container ?? 'mp3'
+  const audioCodec = transcodingOptions?.audioCodec ?? container
+  const transcodingProtocol = transcodingOptions?.transcodingProtocol ?? 'http'
+  const audioChannels = transcodingOptions?.audioChannels ?? 2
 
   const params = new URLSearchParams({
     UserId: userId,
     DeviceId: APP_DEVICE_ID,
-    MaxStreamingBitrate: '320000',
-    Container: 'mp3',
-    AudioCodec: 'mp3',
-    TranscodingProtocol: 'http',
+    MaxStreamingBitrate: String(maxStreamingBitrate),
+    Container: container,
+    AudioCodec: audioCodec,
+    AudioChannels: String(audioChannels),
+    TranscodingProtocol: transcodingProtocol,
     api_key: token,
   })
 

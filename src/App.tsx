@@ -14,6 +14,7 @@ import {
   msFromTicks,
 } from './lib/jellyfin'
 import type { JellyfinAudioItem } from './lib/jellyfin'
+import type { JellyfinTranscodingOptions } from './lib/jellyfin'
 
 const DEFAULT_SERVER_URL = 'https://watch.prnt.ink'
 const STORAGE_KEY = 'jellyfindsp.session'
@@ -95,7 +96,15 @@ function App() {
   const [isSpeedExpanded, setIsSpeedExpanded] = useState(true)
   const [isLowPassExpanded, setIsLowPassExpanded] = useState(true)
   const [isPhaserExpanded, setIsPhaserExpanded] = useState(true)
+  const [isQueueExpanded, setIsQueueExpanded] = useState(true)
+  const [isTranscodingExpanded, setIsTranscodingExpanded] = useState(true)
+  const [isTranscodingEnabled, setIsTranscodingEnabled] = useState(false)
+  const [transcodeBitrateKbps, setTranscodeBitrateKbps] = useState(192)
+  const [transcodeContainer, setTranscodeContainer] = useState<'mp3' | 'aac' | 'opus'>('mp3')
+  const [transcodeProtocol, setTranscodeProtocol] = useState<'http' | 'hls'>('http')
+  const [transcodeChannels, setTranscodeChannels] = useState<1 | 2>(2)
   const [isVolumeHidden, setIsVolumeHidden] = useState(false)
+  const [isFullscreenActive, setIsFullscreenActive] = useState(false)
   
   const [queue, setQueue] = useState<JellyfinAudioItem[]>(() => {
     const savedQueue = localStorage.getItem('jellyfindsp.queue')
@@ -128,6 +137,8 @@ function App() {
   const currentTimeRef = useRef(0)
   const durationRef = useRef(0)
   const expectedDurationRef = useRef(0)
+  const leftPanelRef = useRef<HTMLElement | null>(null)
+  const rightPanelRef = useRef<HTMLElement | null>(null)
   const activeCardRef = useRef<HTMLButtonElement | null>(null)
   const carouselWrapRef = useRef<HTMLDivElement | null>(null)
   const preloadAudioCacheRef = useRef<Record<string, HTMLAudioElement | undefined>>({})
@@ -203,7 +214,7 @@ function App() {
 
     const task = (async () => {
       try {
-        const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId)
+        const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
         const response = await fetch(streamUrl)
         if (!response.ok) {
           return
@@ -235,7 +246,8 @@ function App() {
           return
         }
 
-        const streamUrl = bufferedUrl ?? buildStreamUrl(serverUrl, trackId, token, userId)
+        const streamUrl =
+          bufferedUrl ?? buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
         const peaks = await buildSongIntensityPeaks(streamUrl)
         scrubberPeakCacheRef.current[trackId] = peaks
       } finally {
@@ -251,6 +263,29 @@ function App() {
   const frequencyMultiplier = isSpeedEnabled && adjustPitch ? playbackRate : 1
   const tempoMultiplier = isSpeedEnabled && !adjustPitch ? playbackRate : 1
   const effectiveRate = frequencyMultiplier * tempoMultiplier
+  const lowPassSliderPercent = Math.min(
+    100,
+    Math.max(0, ((lowPassFrequency - 10) / (10000 - 10)) * 100),
+  )
+  const transcodingOptions = useMemo<JellyfinTranscodingOptions | undefined>(() => {
+    if (!isTranscodingEnabled) {
+      return undefined
+    }
+
+    return {
+      maxStreamingBitrate: Math.max(64000, Math.floor(transcodeBitrateKbps * 1000)),
+      container: transcodeContainer,
+      audioCodec: transcodeContainer,
+      transcodingProtocol: transcodeProtocol,
+      audioChannels: transcodeChannels,
+    }
+  }, [
+    isTranscodingEnabled,
+    transcodeBitrateKbps,
+    transcodeContainer,
+    transcodeProtocol,
+    transcodeChannels,
+  ])
 
   useEffect(() => {
     currentTimeRef.current = currentTime
@@ -560,7 +595,7 @@ function App() {
       return
     }
 
-    const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId)
+    const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions)
     setSelectedTrack(track)
     expectedDurationRef.current = msFromTicks(track.RunTimeTicks) / 1000
     setDuration(expectedDurationRef.current)
@@ -769,6 +804,38 @@ function App() {
     }
   }, [selectedTrack?.Id, tracks])
 
+  useLayoutEffect(() => {
+    const left = leftPanelRef.current
+    const right = rightPanelRef.current
+    if (!left || !right) {
+      return
+    }
+
+    const syncRightMaxHeight = () => {
+      const nextHeight = Math.ceil(left.getBoundingClientRect().height)
+      if (nextHeight > 0) {
+        right.style.maxHeight = `${nextHeight}px`
+      }
+    }
+
+    syncRightMaxHeight()
+
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        syncRightMaxHeight()
+      })
+      observer.observe(left)
+    }
+
+    window.addEventListener('resize', syncRightMaxHeight)
+
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', syncRightMaxHeight)
+    }
+  }, [])
+
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) {
@@ -880,6 +947,19 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsFullscreenActive(Boolean(document.fullscreenElement))
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+    syncFullscreenState()
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState)
+    }
+  }, [])
+
+  useEffect(() => {
     if (serverUrl) {
       localStorage.setItem('jellyfindsp.queue', JSON.stringify(queue))
       localStorage.setItem('jellyfindsp.queueServerUrl', serverUrl)
@@ -918,7 +998,7 @@ function App() {
         return
       }
 
-      scrubberCtx.fillStyle = 'rgba(8, 16, 31, 0.28)'
+      scrubberCtx.fillStyle = 'rgba(8, 16, 31, 0.88)'
       scrubberCtx.fillRect(0, 0, size.width, size.height)
 
       const localDuration = durationRef.current
@@ -937,8 +1017,8 @@ function App() {
 
         scrubberCtx.fillStyle =
           barProgress <= progress
-            ? 'rgba(255, 159, 47, 0.5)'
-            : 'rgba(214, 223, 236, 0.26)'
+            ? 'rgba(255, 159, 47, 0.95)'
+            : 'rgba(214, 223, 236, 0.72)'
         scrubberCtx.fillRect(x, y, barWidth, barHeight)
       }
 
@@ -993,7 +1073,7 @@ function App() {
         preloadAudio.preload = 'auto'
         preloadAudio.src =
           bufferedTrackUrlCacheRef.current[track.Id] ??
-          buildStreamUrl(serverUrl, track.Id, token, userId)
+          buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions)
         preloadAudio.load()
         preloadAudioCacheRef.current[track.Id] = preloadAudio
       }
@@ -1009,7 +1089,7 @@ function App() {
         preloadAudio.preload = 'auto'
         preloadAudio.src =
           bufferedTrackUrlCacheRef.current[randomTargetId] ??
-          buildStreamUrl(serverUrl, randomTargetId, token, userId)
+          buildStreamUrl(serverUrl, randomTargetId, token, userId, transcodingOptions)
         preloadAudio.load()
         preloadAudioCacheRef.current[randomTargetId] = preloadAudio
       }
@@ -1026,7 +1106,7 @@ function App() {
       cachedAudio.removeAttribute('src')
       delete preloadAudioCacheRef.current[id]
     }
-  }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token, userId])
+  }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token, userId, transcodingOptions])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -1075,6 +1155,18 @@ function App() {
 
     audio.pause()
     setIsPlaying(false)
+  }
+
+  async function toggleFullscreenMode(): Promise<void> {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen()
+      } else {
+        await document.exitFullscreen()
+      }
+    } catch (error) {
+      setStatus(`Fullscreen failed: ${(error as Error).message}`)
+    }
   }
 
   const trackCards = useMemo(() => {
@@ -1170,8 +1262,8 @@ function App() {
   return (
     <>
       <canvas ref={backgroundWaveformRef} className="global-background-waveform" />
-      <main className="shell">
-        <section className="panel left-panel">
+      <main className={`shell ${isFullscreenActive ? 'fullscreen-hidden' : ''}`}>
+        <section className="panel left-panel" ref={leftPanelRef}>
           <h1>JellyfinDSP</h1>
 
           <details className="auth-section">
@@ -1219,73 +1311,187 @@ function App() {
           <p className="status">{status}</p>
 
           <div className="control-card">
-            {queue.length > 0 && (
-              <div className="queue-panel">
-                <h3>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="8" y1="6" x2="21" y2="6"></line>
-                    <line x1="8" y1="12" x2="21" y2="12"></line>
-                    <line x1="8" y1="18" x2="21" y2="18"></line>
-                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                  </svg>
-                  Next in Queue ({queue.length})
-                </h3>
-                <div className="queue-list">
-                  {queue.map((track, i) => (
-                    <div 
-                      key={`${track.Id}-${i}`} 
-                      className="queue-item"
-                      draggable
-                      onDragStart={(e) => {
-                        draggedItemRef.current = i;
-                        e.dataTransfer.effectAllowed = "move";
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault(); // Necessary to allow dropping
-                        e.dataTransfer.dropEffect = "move";
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const draggedIndex = draggedItemRef.current;
-                        if (draggedIndex === null || draggedIndex === i) return;
-                        setQueue(prev => {
-                          const newQueue = [...prev];
-                          const draggedItem = newQueue[draggedIndex];
-                          newQueue.splice(draggedIndex, 1);
-                          newQueue.splice(i, 0, draggedItem);
-                          return newQueue;
-                        });
-                        draggedItemRef.current = null;
-                      }}
-                    >
-                      <div className="drag-handle" style={{ cursor: 'grab', opacity: 0.5, padding: '0 4px' }}>
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                          <circle cx="9" cy="6" r="1.5"></circle>
-                          <circle cx="15" cy="6" r="1.5"></circle>
-                          <circle cx="9" cy="12" r="1.5"></circle>
-                          <circle cx="15" cy="12" r="1.5"></circle>
-                          <circle cx="9" cy="18" r="1.5"></circle>
-                          <circle cx="15" cy="18" r="1.5"></circle>
-                        </svg>
-                      </div>
-                      <img src={buildImageUrl(serverUrl, track.Id, token)} alt="" />
-                      <div className="info">
-                        <div className="name">{track.Name}</div>
-                      </div>
-                      <button
-                        type="button"
-                        className="remove-btn"
-                        onClick={() => removeFromQueue(i)}
-                      >
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                      </button>
-                    </div>
-                  ))}
-                </div>
+            <div className="queue-panel" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
+              <div className={`menu-head ${isQueueExpanded ? 'expanded' : ''}`}>
+                <h2 onClick={() => setIsQueueExpanded((prev) => !prev)}>
+                  Queue {queue.length > 0 ? `(${queue.length})` : ''}
+                </h2>
               </div>
-            )}
+
+              <AnimatePresence>
+                {isQueueExpanded && (
+                  <motion.div
+                    className="menu-content"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                  >
+                    {queue.length === 0 ? (
+                      <div className="empty-state">Norhing in Queue</div>
+                    ) : (
+                      <div className="queue-list">
+                        {queue.map((track, i) => (
+                          <div
+                            key={`${track.Id}-${i}`}
+                            className="queue-item"
+                            draggable
+                            onDragStart={(e) => {
+                              draggedItemRef.current = i
+                              e.dataTransfer.effectAllowed = 'move'
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault()
+                              e.dataTransfer.dropEffect = 'move'
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault()
+                              const draggedIndex = draggedItemRef.current
+                              if (draggedIndex === null || draggedIndex === i) return
+                              setQueue((prev) => {
+                                const newQueue = [...prev]
+                                const draggedItem = newQueue[draggedIndex]
+                                newQueue.splice(draggedIndex, 1)
+                                newQueue.splice(i, 0, draggedItem)
+                                return newQueue
+                              })
+                              draggedItemRef.current = null
+                            }}
+                          >
+                            <div className="drag-handle" style={{ cursor: 'grab', opacity: 0.5, padding: '0 4px' }}>
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <circle cx="9" cy="6" r="1.5"></circle>
+                                <circle cx="15" cy="6" r="1.5"></circle>
+                                <circle cx="9" cy="12" r="1.5"></circle>
+                                <circle cx="15" cy="12" r="1.5"></circle>
+                                <circle cx="9" cy="18" r="1.5"></circle>
+                                <circle cx="15" cy="18" r="1.5"></circle>
+                              </svg>
+                            </div>
+                            <img src={buildImageUrl(serverUrl, track.Id, token)} alt="" />
+                            <div className="info">
+                              <div className="name">{track.Name}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="remove-btn"
+                              onClick={() => removeFromQueue(i)}
+                            >
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          <div className="control-card">
+            <div className={`menu-head ${isTranscodingExpanded ? 'expanded' : ''}`}>
+              <h2 onClick={() => setIsTranscodingExpanded((prev) => !prev)}>Transcoding</h2>
+              <div className="menu-actions">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  onClick={() => {
+                    setTranscodeBitrateKbps(192)
+                    setTranscodeContainer('mp3')
+                    setTranscodeProtocol('http')
+                    setTranscodeChannels(2)
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className={isTranscodingEnabled ? '' : 'off-btn'}
+                  onClick={() => setIsTranscodingEnabled((prev) => !prev)}
+                >
+                  {isTranscodingEnabled ? 'On' : 'Off'}
+                </button>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {isTranscodingExpanded && (
+                <motion.div
+                  className="menu-content"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <label>
+                    <div className="label-header">
+                      <span>Max bitrate (kbps)</span>
+                      <input
+                        type="number"
+                        className="param-input"
+                        min="64"
+                        max="320"
+                        step="8"
+                        value={transcodeBitrateKbps}
+                        onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
+                        disabled={!isTranscodingEnabled}
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={64}
+                      max={320}
+                      step={8}
+                      value={transcodeBitrateKbps}
+                      onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
+                      disabled={!isTranscodingEnabled}
+                    />
+                  </label>
+
+                  <label>
+                    Container
+                    <select
+                      value={transcodeContainer}
+                      onChange={(event) => setTranscodeContainer(event.target.value as 'mp3' | 'aac' | 'opus')}
+                      disabled={!isTranscodingEnabled}
+                    >
+                      <option value="mp3">MP3</option>
+                      <option value="aac">AAC</option>
+                      <option value="opus">Opus</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Protocol
+                    <select
+                      value={transcodeProtocol}
+                      onChange={(event) => setTranscodeProtocol(event.target.value as 'http' | 'hls')}
+                      disabled={!isTranscodingEnabled}
+                    >
+                      <option value="http">HTTP</option>
+                      <option value="hls">HLS</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Channels
+                    <select
+                      value={transcodeChannels}
+                      onChange={(event) => setTranscodeChannels(Number(event.target.value) as 1 | 2)}
+                      disabled={!isTranscodingEnabled}
+                    >
+                      <option value={1}>Mono</option>
+                      <option value={2}>Stereo</option>
+                    </select>
+                  </label>
+
+                  <p className="subhead" style={{ marginTop: 0 }}>
+                    Enable this to stream and cache lower-bitrate tracks and save bandwidth.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="control-card">
@@ -1379,39 +1585,43 @@ function App() {
                   exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
-                  <label>
-                    <div className="label-header">
-                      <span>Low-pass cutoff (Hz)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="10"
-                        max="10000"
-                        value={Math.round(lowPassFrequency)}
-                        onChange={(e) => setLowPassFrequency(Number(e.target.value))}
-                      />
+                  <div className="range-slider-container low-pass-cutoff-slider">
+                    <div className="range-slider-header">
+                      <span className="range-slider-label">Low-pass Cutoff (Hz)</span>
+                      <div className="range-slider-values">
+                        <input
+                          type="number"
+                          className="param-input"
+                          min="10"
+                          max="10000"
+                          value={Math.round(lowPassFrequency)}
+                          onChange={(e) => setLowPassFrequency(Number(e.target.value))}
+                        />
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min={10}
-                      max={10000}
-                      step={1}
-                      value={lowPassFrequency}
-                      onChange={(event) => setLowPassFrequency(Number(event.target.value))}
-                    />
-                  </label>
+                    <div className="range-slider-wrap">
+                      <input
+                        type="range"
+                        min={10}
+                        max={10000}
+                        step={1}
+                        value={lowPassFrequency}
+                        onChange={(event) => setLowPassFrequency(Number(event.target.value))}
+                        className="thumb thumb--single"
+                      />
+                      <div className="slider">
+                        <div className="slider__track" />
+                        <div
+                          className="slider__range"
+                          style={{ left: 0, width: `${lowPassSliderPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap' }}>
                     <Knob
-                      label="Cutoff (Hz)"
-                      value={lowPassFrequency}
-                      min={10}
-                      max={10000}
-                      onChange={(val) => setLowPassFrequency(val)}
-                      onReset={() => setLowPassFrequency(55)}
-                    />
-                    <Knob
-                      label="Resonance"
+                      label="Q / Resonance"
                       value={lowPassQ}
                       min={0.01}
                       max={5}
@@ -1462,7 +1672,7 @@ function App() {
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
                   <RangeSlider
-                    label="Frequency Range"
+                    label="Frequency Range (Hz)"
                     min={10}
                     max={20000}
                     minVal={phaserMinFreq}
@@ -1509,33 +1719,49 @@ function App() {
           </div>
         </section>
 
-        <section className="panel right-panel">
-          <canvas
-            ref={scrubberCanvasRef}
-            className="carousel-intensity-backdrop"
-            onMouseDown={scrubFromPointer}
-            onTouchStart={(e) => {
-              const touch = e.touches[0]
-              const fakeEvent = {
-                clientX: touch.clientX,
-                currentTarget: e.currentTarget,
-              } as unknown as React.MouseEvent<HTMLCanvasElement>
-              scrubFromPointer(fakeEvent)
-            }}
-            onTouchMove={(e) => {
-              const touch = e.touches[0]
-              const fakeEvent = {
-                clientX: touch.clientX,
-                currentTarget: e.currentTarget,
-              } as unknown as React.MouseEvent<HTMLCanvasElement>
-              scrubFromPointer(fakeEvent)
-            }}
-            onMouseMove={(event) => {
-              if (event.buttons === 1) {
-                scrubFromPointer(event)
-              }
-            }}
-          />
+        <section className="panel right-panel" ref={rightPanelRef}>
+          <div className="playback-strip">
+            <div className="playback-meta">
+              <strong>{selectedTrack?.Name ?? 'No track selected'}</strong>
+              <span>
+                {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
+              </span>
+            </div>
+            <canvas
+              ref={scrubberCanvasRef}
+              className="waveform-canvas"
+              onMouseDown={scrubFromPointer}
+              onTouchStart={(event) => {
+                const touch = event.touches[0]
+                if (!touch) {
+                  return
+                }
+
+                const fakeEvent = {
+                  clientX: touch.clientX,
+                  currentTarget: event.currentTarget,
+                } as unknown as ReactMouseEvent<HTMLCanvasElement>
+                scrubFromPointer(fakeEvent)
+              }}
+              onTouchMove={(event) => {
+                const touch = event.touches[0]
+                if (!touch) {
+                  return
+                }
+
+                const fakeEvent = {
+                  clientX: touch.clientX,
+                  currentTarget: event.currentTarget,
+                } as unknown as ReactMouseEvent<HTMLCanvasElement>
+                scrubFromPointer(fakeEvent)
+              }}
+              onMouseMove={(event) => {
+                if (event.buttons === 1) {
+                  scrubFromPointer(event)
+                }
+              }}
+            />
+          </div>
 
           <header className="library-head">
             <h2>Library Carousel</h2>
@@ -1639,17 +1865,45 @@ function App() {
 
           <div className={`player-right ${isVolumeHidden ? 'hidden' : ''}`}>
             {!isVolumeHidden && (
-              <div className="player-volume">
-                <Knob
-                  label="Volume"
-                  value={masterVolume}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  horizontalSwipe
-                  onChange={(val) => setMasterVolume(val)}
-                />
-              </div>
+              <>
+                <div className="player-volume">
+                  <Knob
+                    label="Volume"
+                    value={masterVolume}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onChange={(val) => setMasterVolume(val)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="ghost fullscreen-icon-btn"
+                  onClick={() => { void toggleFullscreenMode() }}
+                  title={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  aria-label={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+                >
+                  {isFullscreenActive ? (
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 3 3 3 3 9" />
+                      <line x1="3" y1="3" x2="10" y2="10" />
+                      <polyline points="15 21 21 21 21 15" />
+                      <line x1="14" y1="14" x2="21" y2="21" />
+                      <polyline points="21 9 21 3 15 3" />
+                      <line x1="21" y1="3" x2="14" y2="10" />
+                      <polyline points="3 15 3 21 9 21" />
+                      <line x1="3" y1="21" x2="10" y2="14" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 3 21 3 21 9" />
+                      <polyline points="9 21 3 21 3 15" />
+                      <polyline points="21 15 21 21 15 21" />
+                      <polyline points="3 9 3 3 9 3" />
+                    </svg>
+                  )}
+                </button>
+              </>
             )}
           </div>
         </div>

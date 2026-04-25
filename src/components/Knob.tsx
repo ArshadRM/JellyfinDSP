@@ -19,7 +19,7 @@ export function Knob({
   step = 1,
   onChange,
   onReset,
-  horizontalSwipe = false,
+  horizontalSwipe = true,
 }: KnobProps) {
   const [isDragging, setIsDragging] = useState(false)
   const dragMode = useRef<'linear' | 'horizontal' | 'circular' | null>(null)

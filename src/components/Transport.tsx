@@ -34,11 +34,7 @@ export const Transport: React.FC<TransportProps> = ({
         disabled={disabled}
         title="Back 10s"
       >
-        <img 
-          src="file:///home/arshad/.gemini/antigravity/brain/3d82cf06-800f-482b-9393-3d470d22d5b7/media__1777068119686.png" 
-          alt="Back 10s" 
-          className="seek-icon"
-        />
+        <span className="seek-glyph" aria-hidden="true">⏪</span>
       </button>
 
       <button 
@@ -60,11 +56,7 @@ export const Transport: React.FC<TransportProps> = ({
         disabled={disabled}
         title="Forward 10s"
       >
-        <img 
-          src="file:///home/arshad/.gemini/antigravity/brain/3d82cf06-800f-482b-9393-3d470d22d5b7/media__1777068158580.png" 
-          alt="Forward 10s" 
-          className="seek-icon"
-        />
+        <span className="seek-glyph" aria-hidden="true">⏩</span>
       </button>
 
       <button 

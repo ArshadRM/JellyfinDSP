@@ -53,9 +53,33 @@ export const RangeSlider: React.FC<RangeSliderProps> = ({
       <div className="range-slider-header">
         <span className="range-slider-label">{label}</span>
         <div className="range-slider-values">
-          <span className="value-label">{Math.round(minVal)}Hz</span>
+          <input
+            type="number"
+            className="param-input"
+            min={min}
+            max={max}
+            value={Math.round(minVal)}
+            onChange={(event) => {
+              const raw = Number(event.target.value)
+              const value = Math.max(min, Math.min(maxVal - 1, raw))
+              onChange({ min: value, max: maxVal })
+              minValRef.current = value
+            }}
+          />
           <span className="range-separator">—</span>
-          <span className="value-label">{Math.round(maxVal)}Hz</span>
+          <input
+            type="number"
+            className="param-input"
+            min={min}
+            max={max}
+            value={Math.round(maxVal)}
+            onChange={(event) => {
+              const raw = Number(event.target.value)
+              const value = Math.min(max, Math.max(minVal + 1, raw))
+              onChange({ min: minVal, max: value })
+              maxValRef.current = value
+            }}
+          />
         </div>
       </div>
 
