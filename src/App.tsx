@@ -163,61 +163,36 @@ function App() {
   const draggedItemRef = useRef<number | null>(null)
 
   async function buildSongIntensityPeaks(
-    streamUrl: string,
+    trackId: string,
+    serverUrl: string,
     authToken: string,
   ): Promise<number[]> {
-    const response = await fetch(streamUrl, {
-      headers: {
-        'X-Emby-Token': authToken,
-        'X-Emby-Authorization': authHeader(authToken),
-      }
-    })
-    if (!response.ok) {
-      let details = 'No additional info'
-      try {
-        details = await response.text()
-      } catch {}
-      console.error(`Jellyfin Waveform Error (${response.status}):`, details)
-      throw new Error(`Waveform fetch failed (${response.status}): ${details}`)
-    }
-
-    const payload = await response.arrayBuffer()
-
-    const decodeContext = new AudioContext()
+    // Using the official Jellyfin Waveform endpoint is much faster than decoding locally
+    const url = `${serverUrl}/Audio/${trackId}/WaveformSamples?api_key=${authToken}`
+    
     try {
-      const audioBuffer = await decodeContext.decodeAudioData(payload.slice(0))
-
-      const bars = 260
-      const blockSize = Math.max(1, Math.floor(audioBuffer.length / bars))
-      const peaks = new Array(bars).fill(0)
-
-      for (let bar = 0; bar < bars; bar += 1) {
-        const start = bar * blockSize
-        const end = Math.min(audioBuffer.length, start + blockSize)
-
-        let peak = 0
-
-        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
-          const channelData = audioBuffer.getChannelData(channel)
-          for (let i = start; i < end; i += 1) {
-            const sample = Math.abs(channelData[i] ?? 0)
-            if (sample > peak) {
-              peak = sample
-            }
-          }
+      const response = await fetch(url, {
+        headers: {
+          'X-Emby-Token': authToken,
+          'X-Emby-Authorization': authHeader(authToken),
         }
-
-        peaks[bar] = peak
+      })
+      
+      if (!response.ok) {
+        throw new Error(`Waveform endpoint failed (${response.status})`)
       }
 
-      const maxPeak = peaks.reduce((max, value) => Math.max(max, value), 0)
-      if (maxPeak <= 0) {
-        return peaks.map(() => 0)
-      }
+      const data = await response.json()
+      // Jellyfin samples are typically integers (0-255 or similar)
+      const samples: number[] = data.Samples || []
+      
+      if (samples.length === 0) return new Array(260).fill(0)
 
-      return peaks.map((value) => value / maxPeak)
-    } finally {
-      await decodeContext.close()
+      const maxSample = Math.max(...samples) || 1
+      return samples.map(s => s / maxSample)
+    } catch (err) {
+      console.warn('Failed to fetch server-side waveform, using fallback:', err)
+      return new Array(260).fill(0)
     }
   }
 
