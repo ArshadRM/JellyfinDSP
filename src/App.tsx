@@ -397,12 +397,12 @@ function App() {
   }, [phaserMinFreq, phaserMaxFreq, phaserRate, phaserDepth, phaserFeedback])
 
   function addToQueue(track: JellyfinAudioItem): void {
-    setQueue((prev) => [...prev, track])
+    setQueue((prev: JellyfinAudioItem[]) => [...prev, track])
     setStatus(`Added to queue: ${track.Name}`)
   }
 
   function removeFromQueue(index: number): void {
-    setQueue((prev) => prev.filter((_, i) => i !== index))
+    setQueue((prev: JellyfinAudioItem[]) => prev.filter((_, i) => i !== index))
   }
 
   function handleSeek(delta: number): void {
@@ -432,7 +432,7 @@ function App() {
     }
 
     const nextTrack = queue[0]
-    setQueue((prev) => prev.slice(1))
+    setQueue((prev: JellyfinAudioItem[]) => prev.slice(1))
     await handleSelectTrack(nextTrack)
   }
 
@@ -509,7 +509,7 @@ function App() {
           ? `Found ${items.length} matches for "${query}".`
           : `Loaded ${items.length} tracks from Jellyfin.`,
       )
-      setSelectedTrack((prev) => {
+      setSelectedTrack((prev: JellyfinAudioItem | null) => {
         if (!items.length) {
           return null
         }
@@ -1382,7 +1382,7 @@ function App() {
           <div className="control-card">
             <div className="queue-panel" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
               <div className={`menu-head ${isQueueExpanded ? 'expanded' : ''}`}>
-                <h2 onClick={() => setIsQueueExpanded((prev) => !prev)}>
+                <h2 onClick={() => setIsQueueExpanded((prev: boolean) => !prev)}>
                   Queue {queue.length > 0 ? `(${queue.length})` : ''}
                 </h2>
               </div>
@@ -1417,7 +1417,7 @@ function App() {
                               e.preventDefault()
                               const draggedIndex = draggedItemRef.current
                               if (draggedIndex === null || draggedIndex === i) return
-                              setQueue((prev) => {
+                              setQueue((prev: JellyfinAudioItem[]) => {
                                 const newQueue = [...prev]
                                 const draggedItem = newQueue[draggedIndex]
                                 newQueue.splice(draggedIndex, 1)
@@ -1460,7 +1460,7 @@ function App() {
 
           <div className="control-card">
             <div className={`menu-head ${isTranscodingExpanded ? 'expanded' : ''}`}>
-              <h2 onClick={() => setIsTranscodingExpanded((prev) => !prev)}>Transcoding</h2>
+              <h2 onClick={() => setIsTranscodingExpanded((prev: boolean) => !prev)}>Transcoding</h2>
               <div className="menu-actions">
                 <button
                   type="button"
@@ -1477,7 +1477,7 @@ function App() {
                 <button
                   type="button"
                   className={isTranscodingEnabled ? '' : 'off-btn'}
-                  onClick={() => setIsTranscodingEnabled((prev) => !prev)}
+                  onClick={() => setIsTranscodingEnabled((prev: boolean) => !prev)}
                 >
                   {isTranscodingEnabled ? 'On' : 'Off'}
                 </button>
@@ -1560,7 +1560,7 @@ function App() {
 
           <div className="control-card">
             <div className={`menu-head ${isSpeedExpanded ? 'expanded' : ''}`}>
-              <h2 onClick={() => setIsSpeedExpanded((prev) => !prev)}>Speed</h2>
+              <h2 onClick={() => setIsSpeedExpanded((prev: boolean) => !prev)}>Speed</h2>
               <div className="menu-actions">
                 <button
                   type="button"
@@ -1575,7 +1575,7 @@ function App() {
                 <button
                   type="button"
                   className={isSpeedEnabled ? '' : 'off-btn'}
-                  onClick={() => setIsSpeedEnabled((prev) => !prev)}
+                  onClick={() => setIsSpeedEnabled((prev: boolean) => !prev)}
                 >
                   {isSpeedEnabled ? 'On' : 'Off'}
                 </button>
@@ -1618,7 +1618,7 @@ function App() {
 
           <div className="control-card">
             <div className={`menu-head ${isLowPassExpanded ? 'expanded' : ''}`}>
-              <h2 onClick={() => setIsLowPassExpanded((prev) => !prev)}>Low Pass</h2>
+              <h2 onClick={() => setIsLowPassExpanded((prev: boolean) => !prev)}>Low Pass</h2>
               <div className="menu-actions">
                 <button
                   type="button"
@@ -1633,7 +1633,7 @@ function App() {
                 <button
                   type="button"
                   className={isLowPassEnabled ? '' : 'off-btn'}
-                  onClick={() => setIsLowPassEnabled((prev) => !prev)}
+                  onClick={() => setIsLowPassEnabled((prev: boolean) => !prev)}
                 >
                   {isLowPassEnabled ? 'On' : 'Off'}
                 </button>
@@ -1701,7 +1701,7 @@ function App() {
 
           <div className="control-card">
             <div className={`menu-head ${isPhaserExpanded ? 'expanded' : ''}`}>
-              <h2 onClick={() => setIsPhaserExpanded((prev) => !prev)}>Phase Shifter</h2>
+              <h2 onClick={() => setIsPhaserExpanded((prev: boolean) => !prev)}>Phase Shifter</h2>
               <div className="menu-actions">
                 <button
                   type="button"
@@ -1719,7 +1719,7 @@ function App() {
                 <button
                   type="button"
                   className={isPhaserEnabled ? '' : 'off-btn'}
-                  onClick={() => setIsPhaserEnabled((prev) => !prev)}
+                  onClick={() => setIsPhaserEnabled((prev: boolean) => !prev)}
                 >
                   {isPhaserEnabled ? 'On' : 'Off'}
                 </button>
