@@ -2,6 +2,7 @@ type EngineOptions = {
   lowPassFrequency: number
   lowPassQ: number
   lowPassEnabled: boolean
+  lowPassClipGuardEnabled: boolean
   masterVolume: number
   phaserEnabled: boolean
   phaserMinFreq: number
@@ -163,6 +164,7 @@ export class AudioEngine {
   private analyserNode: AnalyserNode | null = null
   private connectedElement: HTMLAudioElement | null = null
   private lowPassEnabled = true
+  private lowPassClipGuardEnabled = true
   private lowPassFrequency = 55
   private lowPassQ = 0.54
   private workletLoaded = false
@@ -239,8 +241,9 @@ export class AudioEngine {
       return
     }
 
+    const targetGain = this.lowPassEnabled ? (this.lowPassClipGuardEnabled ? 0.82 : 1) : 0
     this.lowPassMixNode.gain.setTargetAtTime(
-      this.lowPassEnabled ? 1 : 0,
+      targetGain,
       this.context?.currentTime ?? 0,
       0.04,
     )
@@ -252,10 +255,6 @@ export class AudioEngine {
     }
 
     if (!this.workletLoaded) {
-      if (!this.context.audioWorklet) {
-        console.error('AudioWorklet is not available. This app requires a secure context (HTTPS) for audio effects.')
-        return
-      }
       const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
       const url = URL.createObjectURL(blob)
       await this.context.audioWorklet.addModule(url)
@@ -271,18 +270,15 @@ export class AudioEngine {
       this.monoToStereoNode = this.context.createChannelMerger(2)
       this.lowPassMixNode = this.context.createGain()
       this.masterGainNode = this.context.createGain()
-
-      if (this.workletLoaded) {
-        this.phaserNode = new AudioWorkletNode(this.context, 'phaser-worklet', {
-          outputChannelCount: [2]
-        })
-      }
-
+      this.phaserNode = new AudioWorkletNode(this.context, 'phaser-worklet', {
+        outputChannelCount: [2]
+      })
       this.analyserNode = this.context.createAnalyser()
 
       this.lowPassFrequency = options.lowPassFrequency
       this.lowPassQ = options.lowPassQ
       this.lowPassEnabled = options.lowPassEnabled
+      this.lowPassClipGuardEnabled = options.lowPassClipGuardEnabled
       this.masterGainNode.gain.value = options.masterVolume
       
       this.setPhaserParams({
@@ -305,14 +301,8 @@ export class AudioEngine {
       this.splitterNode.connect(this.monoSumNode, 1, 0)
       this.monoToStereoNode.connect(this.lowPassMixNode)
       this.lowPassMixNode.connect(this.masterGainNode)
-      
-      if (this.phaserNode) {
-        this.masterGainNode.connect(this.phaserNode)
-        this.phaserNode.connect(this.analyserNode)
-      } else {
-        this.masterGainNode.connect(this.analyserNode)
-      }
-
+      this.masterGainNode.connect(this.phaserNode)
+      this.phaserNode.connect(this.analyserNode)
       this.analyserNode.connect(this.context.destination)
 
       this.reconnectGraph()
@@ -322,6 +312,7 @@ export class AudioEngine {
       this.lowPassFrequency = options.lowPassFrequency
       this.lowPassQ = options.lowPassQ
       this.lowPassEnabled = options.lowPassEnabled
+      this.lowPassClipGuardEnabled = options.lowPassClipGuardEnabled
       this.rebuildLowPassNode()
       this.masterGainNode?.gain.setTargetAtTime(
         options.masterVolume,
@@ -342,6 +333,11 @@ export class AudioEngine {
 
   setLowPassEnabled(enabled: boolean): void {
     this.lowPassEnabled = enabled
+    this.reconnectGraph()
+  }
+
+  setLowPassClipGuard(enabled: boolean): void {
+    this.lowPassClipGuardEnabled = enabled
     this.reconnectGraph()
   }
 

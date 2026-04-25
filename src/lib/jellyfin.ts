@@ -258,18 +258,25 @@ export function buildStreamUrl(
 
   // If Transcoding is explicitly requested
   if (transcodingOptions) {
+    const bitrate = Math.max(16_000, Math.floor(transcodingOptions.maxStreamingBitrate || 320_000))
     const params = new URLSearchParams({
       UserId: userId,
       DeviceId: APP_DEVICE_ID,
-      MaxStreamingBitrate: String(transcodingOptions.maxStreamingBitrate || 320000),
+      MaxStreamingBitrate: String(bitrate),
       Container: transcodingOptions.container || 'mp3',
       AudioCodec: transcodingOptions.audioCodec || transcodingOptions.container || 'mp3',
       TranscodingContainer: transcodingOptions.container || 'mp3',
       TranscodingProtocol: transcodingOptions.transcodingProtocol || 'http',
-      AudioBitRate: String(transcodingOptions.maxStreamingBitrate || 320000),
+      AudioBitRate: String(bitrate),
       EnableAutoStreamCopy: 'false',
+      EnableDirectPlay: 'false',
+      EnableDirectStream: 'false',
       api_key: token,
     })
+
+    if (transcodingOptions.audioChannels) {
+      params.set('AudioChannels', String(transcodingOptions.audioChannels))
+    }
 
     if (playSessionId) {
       params.set('PlaySessionId', playSessionId)

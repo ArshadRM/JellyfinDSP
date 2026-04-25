@@ -20,6 +20,20 @@ import type { JellyfinTranscodingOptions } from './lib/jellyfin'
 const DEFAULT_SERVER_URL = 'https://watch.prnt.ink'
 const STORAGE_KEY = 'jellyfindsp.session'
 const SETTINGS_KEY = 'jellyfindsp.settings'
+const STATS_KEY = 'jellyfindsp.stats'
+
+type CacheMode = 'queue-nearby-random' | 'queue-nearby' | 'queue-only' | 'none'
+
+type CachedTrackInfo = {
+  id: string
+  name: string
+  bytes: number
+}
+
+type PersistedStats = {
+  totalDataBytes: number
+  totalSongsPlayed: number
+}
 
 type Session = {
   serverUrl: string
@@ -64,6 +78,35 @@ function shuffleItems(items: JellyfinAudioItem[]): JellyfinAudioItem[] {
   return next
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) {
+    return '0 B'
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB']
+  const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  const value = bytes / 1024 ** exponent
+  const decimals = exponent === 0 ? 0 : value < 10 ? 2 : 1
+  return `${value.toFixed(decimals)} ${units[exponent]}`
+}
+
+function loadPersistedStats(): PersistedStats {
+  const raw = localStorage.getItem(STATS_KEY)
+  if (!raw) {
+    return { totalDataBytes: 0, totalSongsPlayed: 0 }
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<PersistedStats>
+    return {
+      totalDataBytes: Math.max(0, Number(parsed.totalDataBytes ?? 0)),
+      totalSongsPlayed: Math.max(0, Number(parsed.totalSongsPlayed ?? 0)),
+    }
+  } catch {
+    return { totalDataBytes: 0, totalSongsPlayed: 0 }
+  }
+}
+
 const initialSettings = (() => {
   const saved = localStorage.getItem(SETTINGS_KEY)
   if (saved) {
@@ -75,6 +118,7 @@ const initialSettings = (() => {
 })()
 
 function App() {
+  const initialStats = loadPersistedStats()
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL)
   const [username, setUsername] = useState('Guest')
   const [password, setPassword] = useState('')
@@ -91,6 +135,7 @@ function App() {
   const [speedPercent, setSpeedPercent] = useState(initialSettings.speedPercent ?? 80)
   const [adjustPitch, setAdjustPitch] = useState(initialSettings.adjustPitch ?? true)
   const [isLowPassEnabled, setIsLowPassEnabled] = useState(initialSettings.isLowPassEnabled ?? true)
+  const [isReduceClippingEnabled, setIsReduceClippingEnabled] = useState(initialSettings.isReduceClippingEnabled ?? true)
   const [lowPassFrequency, setLowPassFrequency] = useState(initialSettings.lowPassFrequency ?? 55)
   const [lowPassQ, setLowPassQ] = useState(initialSettings.lowPassQ ?? 0.80)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -107,14 +152,25 @@ function App() {
   const [hasInitialShuffleLoaded, setHasInitialShuffleLoaded] = useState(false)
   const [isSpeedExpanded, setIsSpeedExpanded] = useState(initialSettings.isSpeedExpanded ?? true)
   const [isLowPassExpanded, setIsLowPassExpanded] = useState(initialSettings.isLowPassExpanded ?? true)
-  const [isPhaserExpanded, setIsPhaserExpanded] = useState(initialSettings.isPhaserExpanded ?? true)
+  const [isPhaserExpanded, setIsPhaserExpanded] = useState(false)
   const [isQueueExpanded, setIsQueueExpanded] = useState(initialSettings.isQueueExpanded ?? true)
-  const [isTranscodingExpanded, setIsTranscodingExpanded] = useState(initialSettings.isTranscodingExpanded ?? true)
+  const [isTranscodingExpanded, setIsTranscodingExpanded] = useState(false)
   const [isTranscodingEnabled, setIsTranscodingEnabled] = useState(initialSettings.isTranscodingEnabled ?? false)
   const [transcodeBitrateKbps, setTranscodeBitrateKbps] = useState(initialSettings.transcodeBitrateKbps ?? 192)
   const [transcodeContainer, setTranscodeContainer] = useState<'mp3' | 'aac' | 'opus'>(initialSettings.transcodeContainer ?? 'mp3')
   const [transcodeProtocol, setTranscodeProtocol] = useState<'http' | 'hls'>(initialSettings.transcodeProtocol ?? 'http')
   const [transcodeChannels, setTranscodeChannels] = useState<1 | 2>(initialSettings.transcodeChannels ?? 2)
+  const [isCachingExpanded, setIsCachingExpanded] = useState(false)
+  const [cachingMode, setCachingMode] = useState<CacheMode>(initialSettings.cachingMode ?? 'queue-nearby-random')
+  const [cacheLimitMb, setCacheLimitMb] = useState(initialSettings.cacheLimitMb ?? 4096)
+  const [isCacheLimitTextOnly, setIsCacheLimitTextOnly] = useState(initialSettings.isCacheLimitTextOnly ?? true)
+  const [cachedTracks, setCachedTracks] = useState<CachedTrackInfo[]>([])
+  const [isStatsExpanded, setIsStatsExpanded] = useState(initialSettings.isStatsExpanded ?? true)
+  const [sessionDataBytes, setSessionDataBytes] = useState(0)
+  const [totalDataBytes, setTotalDataBytes] = useState(initialStats.totalDataBytes)
+  const [sessionSongsPlayed, setSessionSongsPlayed] = useState(0)
+  const [totalSongsPlayed, setTotalSongsPlayed] = useState(initialStats.totalSongsPlayed)
+  const [isPlaybackEcoMode, setIsPlaybackEcoMode] = useState(initialSettings.isPlaybackEcoMode ?? false)
   const [isVolumeHidden, setIsVolumeHidden] = useState(false)
   const [isFullscreenActive, setIsFullscreenActive] = useState(false)
   
@@ -158,15 +214,131 @@ function App() {
   const bufferingTasksRef = useRef<Record<string, Promise<void> | undefined>>({})
   const scrubberPeakCacheRef = useRef<Record<string, number[] | undefined>>({})
   const scrubberPeakTasksRef = useRef<Record<string, Promise<void> | undefined>>({})
+  const cachedTrackInfoRef = useRef<Record<string, CachedTrackInfo | undefined>>({})
+  const cacheOrderRef = useRef<string[]>([])
+  const playedTrackIdsRef = useRef<Set<string>>(new Set())
+  const totalDataBytesRef = useRef(initialStats.totalDataBytes)
+  const totalSongsPlayedRef = useRef(initialStats.totalSongsPlayed)
   const engineRef = useRef(new AudioEngine())
   const lastSearchIdRef = useRef(0)
   const draggedItemRef = useRef<number | null>(null)
 
-  async function buildSongIntensityPeaks(
-    trackId: string,
-    serverUrl: string,
-    authToken: string,
-  ): Promise<number[]> {
+  function addStreamedBytes(bytes: number): void {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return
+    }
+
+    setSessionDataBytes((prev) => prev + bytes)
+    setTotalDataBytes((prev) => {
+      const next = prev + bytes
+      totalDataBytesRef.current = next
+      return next
+    })
+  }
+
+  function persistStats(totalBytes: number, songsPlayed: number): void {
+    localStorage.setItem(
+      STATS_KEY,
+      JSON.stringify({
+        totalDataBytes: totalBytes,
+        totalSongsPlayed: songsPlayed,
+      }),
+    )
+  }
+
+  function getCachedBytesTotal(): number {
+    return Object.values(cachedTrackInfoRef.current).reduce((sum, info) => sum + (info?.bytes ?? 0), 0)
+  }
+
+  function syncCachedTracksState(): void {
+    const ordered = cacheOrderRef.current
+      .map((id) => cachedTrackInfoRef.current[id])
+      .filter((entry): entry is CachedTrackInfo => Boolean(entry))
+    setCachedTracks(ordered)
+  }
+
+  function getProtectedCacheIds(): Set<string> {
+    const protectedIds = new Set<string>()
+
+    if (selectedTrack?.Id) {
+      protectedIds.add(selectedTrack.Id)
+    }
+
+    if (cachingMode === 'queue-only' || cachingMode === 'queue-nearby' || cachingMode === 'queue-nearby-random') {
+      for (const queuedTrack of queue) {
+        protectedIds.add(queuedTrack.Id)
+      }
+    }
+
+    if (selectedTrack?.Id && (cachingMode === 'queue-nearby' || cachingMode === 'queue-nearby-random')) {
+      const selectedIndex = tracks.findIndex((track) => track.Id === selectedTrack.Id)
+      if (selectedIndex >= 0) {
+        const nearby = tracks[selectedIndex + 1]
+        if (nearby) {
+          protectedIds.add(nearby.Id)
+        }
+      }
+    }
+
+    if (randomTargetId && cachingMode === 'queue-nearby-random') {
+      protectedIds.add(randomTargetId)
+    }
+
+    return protectedIds
+  }
+
+  function evictCacheEntry(trackId: string): void {
+    const objectUrl = bufferedTrackUrlCacheRef.current[trackId]
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl)
+      delete bufferedTrackUrlCacheRef.current[trackId]
+    }
+
+    const cachedAudio = preloadAudioCacheRef.current[trackId]
+    if (cachedAudio) {
+      cachedAudio.pause()
+      cachedAudio.removeAttribute('src')
+      delete preloadAudioCacheRef.current[trackId]
+    }
+
+    delete cachedTrackInfoRef.current[trackId]
+    cacheOrderRef.current = cacheOrderRef.current.filter((id) => id !== trackId)
+  }
+
+  function pruneBufferedCache(limitOverrideMb?: number): void {
+    if (cachingMode === 'none') {
+      for (const trackId of [...cacheOrderRef.current]) {
+        evictCacheEntry(trackId)
+      }
+      syncCachedTracksState()
+      return
+    }
+
+    const hardLimitBytes = Math.max(1, Math.floor((limitOverrideMb ?? cacheLimitMb) * 1024 * 1024))
+    let total = getCachedBytesTotal()
+    if (total <= hardLimitBytes) {
+      syncCachedTracksState()
+      return
+    }
+
+    const protectedIds = getProtectedCacheIds()
+    for (const trackId of [...cacheOrderRef.current]) {
+      if (total <= hardLimitBytes) {
+        break
+      }
+      if (protectedIds.has(trackId)) {
+        continue
+      }
+
+      const bytes = cachedTrackInfoRef.current[trackId]?.bytes ?? 0
+      evictCacheEntry(trackId)
+      total -= bytes
+    }
+
+    syncCachedTracksState()
+  }
+
+  async function buildSongIntensityPeaks(trackId: string, authToken: string): Promise<number[]> {
     // Using the official Jellyfin Waveform endpoint is much faster than decoding locally
     const url = `${serverUrl}/Audio/${trackId}/WaveformSamples?api_key=${authToken}`
     
@@ -180,6 +352,11 @@ function App() {
       
       if (!response.ok) {
         throw new Error(`Waveform endpoint failed (${response.status})`)
+      }
+
+      const lengthHeader = Number(response.headers.get('content-length') || 0)
+      if (lengthHeader > 0) {
+        addStreamedBytes(lengthHeader)
       }
 
       const data = await response.json()
@@ -201,6 +378,10 @@ function App() {
   }
 
   async function ensureTrackBuffered(trackId: string): Promise<void> {
+    if (cachingMode === 'none') {
+      return
+    }
+
     if (bufferedTrackUrlCacheRef.current[trackId] || bufferingTasksRef.current[trackId]) {
       return
     }
@@ -212,6 +393,8 @@ function App() {
 
     const task = (async () => {
       try {
+        pruneBufferedCache(cacheLimitMb)
+
         const sid = Math.random().toString(36).substring(2, 10)
         const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions, sid)
         const response = await fetch(streamUrl, {
@@ -227,8 +410,19 @@ function App() {
         }
 
         const blob = await response.blob()
+        const bytes = blob.size
+        addStreamedBytes(bytes)
+
         const objectUrl = URL.createObjectURL(blob)
         bufferedTrackUrlCacheRef.current[trackId] = objectUrl
+        const trackName = track.Name || `Track ${trackId}`
+        cachedTrackInfoRef.current[trackId] = {
+          id: trackId,
+          name: trackName,
+          bytes,
+        }
+        cacheOrderRef.current = [...cacheOrderRef.current.filter((id) => id !== trackId), trackId]
+        pruneBufferedCache(cacheLimitMb)
       } finally {
         delete bufferingTasksRef.current[trackId]
       }
@@ -245,16 +439,12 @@ function App() {
 
     const task = (async () => {
       try {
-        await ensureTrackBuffered(trackId)
-        const bufferedUrl = bufferedTrackUrlCacheRef.current[trackId]
         const track = getTrackById(trackId)
         if (!track) {
           return
         }
 
-        const streamUrl =
-          bufferedUrl ?? buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
-        const peaks = await buildSongIntensityPeaks(streamUrl, token)
+        const peaks = await buildSongIntensityPeaks(trackId, token)
         scrubberPeakCacheRef.current[trackId] = peaks
       } finally {
         delete scrubberPeakTasksRef.current[trackId]
@@ -266,9 +456,9 @@ function App() {
   }
 
   const playbackRate = speedPercent / 100
-  const frequencyMultiplier = isSpeedEnabled && adjustPitch ? playbackRate : 1
+  const frequencyMultiplier = isSpeedEnabled && adjustPitch && !isPlaybackEcoMode ? playbackRate : 1
   const tempoMultiplier = isSpeedEnabled && !adjustPitch ? playbackRate : 1
-  const effectiveRate = frequencyMultiplier * tempoMultiplier
+  const effectiveRate = isSpeedEnabled ? frequencyMultiplier * tempoMultiplier : 1
   const lowPassSliderPercent = Math.min(
     100,
     Math.max(0, ((lowPassFrequency - 10) / (10000 - 10)) * 100),
@@ -279,7 +469,7 @@ function App() {
     }
 
     return {
-      maxStreamingBitrate: Math.max(4000, Math.floor(transcodeBitrateKbps * 1000)),
+      maxStreamingBitrate: Math.max(16_000, Math.floor(transcodeBitrateKbps * 1000)),
       container: transcodeContainer,
       audioCodec: transcodeContainer,
       transcodingProtocol: transcodeProtocol,
@@ -357,9 +547,15 @@ function App() {
       return
     }
 
+    if (isPlaybackEcoMode && isSpeedEnabled) {
+      audio.playbackRate = playbackRate
+      applyPreservePitch(audio, false)
+      return
+    }
+
     audio.playbackRate = effectiveRate
-    applyPreservePitch(audio, tempoMultiplier !== 1)
-  }, [effectiveRate, tempoMultiplier])
+    applyPreservePitch(audio, tempoMultiplier !== 1 && !isPlaybackEcoMode)
+  }, [effectiveRate, tempoMultiplier, isPlaybackEcoMode, isSpeedEnabled, playbackRate])
 
   useEffect(() => {
     engineRef.current.setMasterVolume(masterVolume)
@@ -368,6 +564,10 @@ function App() {
   useEffect(() => {
     engineRef.current.setLowPassEnabled(isLowPassEnabled)
   }, [isLowPassEnabled])
+
+  useEffect(() => {
+    engineRef.current.setLowPassClipGuard(isReduceClippingEnabled)
+  }, [isReduceClippingEnabled])
 
   useEffect(() => {
     engineRef.current.setLowPassFrequency(lowPassFrequency)
@@ -466,6 +666,9 @@ function App() {
     bufferingTasksRef.current = {}
     scrubberPeakCacheRef.current = {}
     scrubberPeakTasksRef.current = {}
+    cachedTrackInfoRef.current = {}
+    cacheOrderRef.current = []
+    setCachedTracks([])
   }
 
   async function loadTracks(
@@ -517,6 +720,31 @@ function App() {
         return stillVisible ?? items[0]
       })
     } catch (error) {
+      const message = (error as Error).message || ''
+      const shouldRetryAuth =
+        query.trim().length > 0 &&
+        message.includes('404') &&
+        username.trim().length > 0 &&
+        password.trim().length > 0 &&
+        !authOverride
+
+      if (shouldRetryAuth) {
+        try {
+          setStatus('Search endpoint returned 404. Re-authenticating and retrying...')
+          const refreshed = await authenticate(serverUrl, username, password)
+          setToken(refreshed.AccessToken)
+          setUserId(refreshed.User.Id)
+          await loadTracks(query, {
+            token: refreshed.AccessToken,
+            userId: refreshed.User.Id,
+          }, fetchOptions)
+          return
+        } catch (retryError) {
+          setStatus(`Re-auth failed after 404: ${(retryError as Error).message}`)
+          return
+        }
+      }
+
       if (currentSearchId === lastSearchIdRef.current) {
         setStatus(`Failed to load tracks: ${(error as Error).message}`)
       }
@@ -619,7 +847,7 @@ function App() {
       })
     }
 
-    if (!bufferedTrackUrlCacheRef.current[track.Id]) {
+    if (cachingMode !== 'none' && !bufferedTrackUrlCacheRef.current[track.Id]) {
       setStatus(`Buffering ${track.Name}...`)
       try {
         await ensureTrackBuffered(track.Id)
@@ -631,15 +859,22 @@ function App() {
     const bufferedUrl = bufferedTrackUrlCacheRef.current[track.Id]
 
     audio.crossOrigin = 'anonymous'
+    audio.setAttribute('playsinline', 'true')
     audio.src = bufferedUrl ?? streamUrl
     audio.load()
-    audio.playbackRate = effectiveRate
-    applyPreservePitch(audio, tempoMultiplier !== 1)
+    if (isPlaybackEcoMode && isSpeedEnabled) {
+      audio.playbackRate = playbackRate
+      applyPreservePitch(audio, false)
+    } else {
+      audio.playbackRate = effectiveRate
+      applyPreservePitch(audio, tempoMultiplier !== 1 && !isPlaybackEcoMode)
+    }
 
     await engineRef.current.setupForElement(audio, {
       lowPassFrequency,
       lowPassQ,
       lowPassEnabled: isLowPassEnabled,
+      lowPassClipGuardEnabled: isReduceClippingEnabled,
       masterVolume,
       phaserEnabled: isPhaserEnabled,
       phaserMinFreq,
@@ -654,6 +889,15 @@ function App() {
       await engineRef.current.resume()
       await audio.play()
       setIsPlaying(true)
+      if (!playedTrackIdsRef.current.has(track.Id)) {
+        playedTrackIdsRef.current.add(track.Id)
+        setSessionSongsPlayed((prev) => prev + 1)
+        setTotalSongsPlayed((prev) => {
+          const next = prev + 1
+          totalSongsPlayedRef.current = next
+          return next
+        })
+      }
       setStatus(`Now playing: ${track.Name}`)
     } catch (error) {
       const reason =
@@ -785,7 +1029,12 @@ function App() {
     }
 
     const offsetX = clientX - rect.left
-    const ratio = Math.min(1, Math.max(0, offsetX / rect.width))
+    const peaks = scrubberPeaks.length ? scrubberPeaks : new Array(160).fill(0.18)
+    const barCount = peaks.length
+    const barGap = 1
+    const barWidth = Math.max(1, rect.width / barCount - barGap)
+    const renderedWidth = barCount * (barWidth + barGap) - barGap
+    const ratio = Math.min(1, Math.max(0, offsetX / Math.max(1, renderedWidth)))
     handleScrub(ratio * duration)
   }
 
@@ -995,8 +1244,10 @@ function App() {
       masterVolume,
       isSpeedEnabled,
       speedPercent,
+      isPlaybackEcoMode,
       adjustPitch,
       isLowPassEnabled,
+      isReduceClippingEnabled,
       lowPassFrequency,
       lowPassQ,
       isPhaserEnabled,
@@ -1007,22 +1258,26 @@ function App() {
       phaserFeedback,
       isSpeedExpanded,
       isLowPassExpanded,
-      isPhaserExpanded,
       isQueueExpanded,
-      isTranscodingExpanded,
+      isStatsExpanded,
       isTranscodingEnabled,
       transcodeBitrateKbps,
       transcodeContainer,
       transcodeProtocol,
       transcodeChannels,
+      cachingMode,
+      cacheLimitMb,
+      isCacheLimitTextOnly,
     }
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
   }, [
     masterVolume,
     isSpeedEnabled,
     speedPercent,
+    isPlaybackEcoMode,
     adjustPitch,
     isLowPassEnabled,
+    isReduceClippingEnabled,
     lowPassFrequency,
     lowPassQ,
     isPhaserEnabled,
@@ -1033,15 +1288,25 @@ function App() {
     phaserFeedback,
     isSpeedExpanded,
     isLowPassExpanded,
-    isPhaserExpanded,
     isQueueExpanded,
-    isTranscodingExpanded,
+    isStatsExpanded,
     isTranscodingEnabled,
     transcodeBitrateKbps,
     transcodeContainer,
     transcodeProtocol,
     transcodeChannels,
+    cachingMode,
+    cacheLimitMb,
+    isCacheLimitTextOnly,
   ])
+
+  useEffect(() => {
+    persistStats(totalDataBytes, totalSongsPlayed)
+  }, [totalDataBytes, totalSongsPlayed])
+
+  useEffect(() => {
+    pruneBufferedCache()
+  }, [cacheLimitMb, cachingMode, queue, selectedTrack?.Id, randomTargetId])
 
   useEffect(() => {
     const scrubberCanvas = scrubberCanvasRef.current
@@ -1130,6 +1395,11 @@ function App() {
       return
     }
 
+    if (cachingMode === 'none') {
+      clearPreloadCache()
+      return
+    }
+
     const currentIndex = tracks.findIndex((track) => track.Id === selectedTrack.Id)
     if (currentIndex < 0) {
       return
@@ -1137,43 +1407,39 @@ function App() {
 
     const keepIds = new Set<string>()
     const preloadTimer = window.setTimeout(() => {
-      // Only preload the NEXT track (+1) for gapless support and the random target
-      for (let offset = 1; offset <= 1; offset += 1) {
-        const track = tracks[currentIndex + offset]
-        if (!track) {
-          continue
-        }
-
-        keepIds.add(track.Id)
-
-        if (!preloadAudioCacheRef.current[track.Id]) {
+      const enqueuePreload = (trackId: string) => {
+        keepIds.add(trackId)
+        if (!preloadAudioCacheRef.current[trackId]) {
           const preloadAudio = new Audio()
           preloadAudio.preload = 'auto'
           preloadAudio.src =
-            bufferedTrackUrlCacheRef.current[track.Id] ??
-            buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions)
+            bufferedTrackUrlCacheRef.current[trackId] ??
+            buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions)
           preloadAudio.load()
-          preloadAudioCacheRef.current[track.Id] = preloadAudio
+          preloadAudioCacheRef.current[trackId] = preloadAudio
         }
 
-        void ensureTrackBuffered(track.Id)
-        void ensureWaveformCached(track.Id)
+        void ensureTrackBuffered(trackId)
+        void ensureWaveformCached(trackId)
       }
 
-      if (randomTargetId) {
-        keepIds.add(randomTargetId)
-        if (!preloadAudioCacheRef.current[randomTargetId]) {
-          const preloadAudio = new Audio()
-          preloadAudio.preload = 'auto'
-          preloadAudio.src =
-            bufferedTrackUrlCacheRef.current[randomTargetId] ??
-            buildStreamUrl(serverUrl, randomTargetId, token, userId, transcodingOptions)
-          preloadAudio.load()
-          preloadAudioCacheRef.current[randomTargetId] = preloadAudio
+      if (cachingMode === 'queue-nearby' || cachingMode === 'queue-nearby-random') {
+        const track = tracks[currentIndex + 1]
+        if (track) {
+          enqueuePreload(track.Id)
         }
+      }
 
-        void ensureTrackBuffered(randomTargetId)
-        void ensureWaveformCached(randomTargetId)
+      if (cachingMode === 'queue-nearby-random' && randomTargetId) {
+        enqueuePreload(randomTargetId)
+      }
+
+      for (const queuedTrack of queue.slice(0, 6)) {
+        enqueuePreload(queuedTrack.Id)
+      }
+
+      if (randomTargetId && cachingMode === 'queue-nearby-random') {
+        keepIds.add(randomTargetId)
       }
 
       for (const [id, cachedAudio] of Object.entries(preloadAudioCacheRef.current)) {
@@ -1187,7 +1453,7 @@ function App() {
     }, 1000)
 
     return () => window.clearTimeout(preloadTimer)
-  }, [selectedTrack?.Id, randomTargetId, tracks, serverUrl, token, userId, transcodingOptions])
+  }, [selectedTrack?.Id, randomTargetId, tracks, queue, serverUrl, token, userId, transcodingOptions, cachingMode])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -1217,6 +1483,71 @@ function App() {
     }
   }, [selectedTrack, tracks])
 
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
+      return
+    }
+
+    const mediaSession = navigator.mediaSession
+
+    if (selectedTrack) {
+      mediaSession.metadata = new MediaMetadata({
+        title: selectedTrack.Name,
+        artist: selectedTrack.Artists?.join(', ') || 'Unknown artist',
+        album: selectedTrack.Album || 'Jellyfin Library',
+        artwork: [
+          {
+            src: buildImageUrl(serverUrl, selectedTrack.Id, token),
+            sizes: '512x512',
+            type: 'image/jpeg',
+          },
+        ],
+      })
+    }
+
+    mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+    mediaSession.setActionHandler('play', () => {
+      void togglePlayback()
+    })
+    mediaSession.setActionHandler('pause', () => {
+      void togglePlayback()
+    })
+    mediaSession.setActionHandler('previoustrack', () => {
+      void handleRestartOrPrev()
+    })
+    mediaSession.setActionHandler('nexttrack', () => {
+      void handleNextTrack()
+    })
+    mediaSession.setActionHandler('seekbackward', () => handleSeek(-10))
+    mediaSession.setActionHandler('seekforward', () => handleSeek(10))
+    mediaSession.setActionHandler('seekto', (details) => {
+      if (details.seekTime !== undefined) {
+        handleScrub(details.seekTime)
+      }
+    })
+
+    return () => {
+      mediaSession.setActionHandler('play', null)
+      mediaSession.setActionHandler('pause', null)
+      mediaSession.setActionHandler('previoustrack', null)
+      mediaSession.setActionHandler('nexttrack', null)
+      mediaSession.setActionHandler('seekbackward', null)
+      mediaSession.setActionHandler('seekforward', null)
+      mediaSession.setActionHandler('seekto', null)
+    }
+  }, [selectedTrack, isPlaying, currentTime, duration, serverUrl, token])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && isPlaying) {
+        void engineRef.current.resume()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [isPlaying])
+
   async function togglePlayback(): Promise<void> {
     const audio = audioRef.current
     if (!audio || !selectedTrack) {
@@ -1241,9 +1572,29 @@ function App() {
   async function toggleFullscreenMode(): Promise<void> {
     try {
       if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen()
+        const element = document.documentElement as HTMLElement & {
+          webkitRequestFullscreen?: () => Promise<void> | void
+        }
+
+        if (element.requestFullscreen) {
+          await element.requestFullscreen()
+        } else if (element.webkitRequestFullscreen) {
+          await element.webkitRequestFullscreen()
+        } else {
+          setIsFullscreenActive(true)
+        }
       } else {
-        await document.exitFullscreen()
+        const doc = document as Document & {
+          webkitExitFullscreen?: () => Promise<void> | void
+        }
+
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen()
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen()
+        } else {
+          setIsFullscreenActive(false)
+        }
       }
     } catch (error) {
       setStatus(`Fullscreen failed: ${(error as Error).message}`)
@@ -1351,45 +1702,254 @@ function App() {
           <h1>JellyfinDSP</h1>
 
           <details className="auth-section">
-            <summary>Jellyfin Connection</summary>
-            <form className="auth-form" onSubmit={handleLogin}>
-              <label>
-                Jellyfin URL
-                <input
-                  value={serverUrl}
-                  onChange={(event) => setServerUrl(event.target.value)}
-                  placeholder="https://watch.prnt.ink"
-                  required
-                />
-              </label>
-              <label>
-                Username
-                <input
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Password
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              </label>
-              <div className="auth-actions">
-                <button type="submit">Connect</button>
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={handleLogout}
-                  disabled={!isAuthenticated}
-                >
-                  Logout
-                </button>
+            <summary>Jellyfin + Data Settings</summary>
+            <div className="control-card login-mod">
+              <form className="auth-form" onSubmit={handleLogin}>
+                <label>
+                  Jellyfin URL
+                  <input
+                    value={serverUrl}
+                    onChange={(event) => setServerUrl(event.target.value)}
+                    placeholder="https://watch.prnt.ink"
+                    required
+                  />
+                </label>
+                <label>
+                  Username
+                  <input
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </label>
+                <div className="auth-actions">
+                  <button type="submit">Connect</button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={handleLogout}
+                    disabled={!isAuthenticated}
+                  >
+                    Logout
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="connection-mods">
+              <div className="control-card">
+                <div className={`menu-head ${isTranscodingExpanded ? 'expanded' : ''}`}>
+                  <h2 onClick={() => setIsTranscodingExpanded((prev: boolean) => !prev)}>Transcoding</h2>
+                  <div className="menu-actions">
+                    <button
+                      type="button"
+                      className="reset-btn"
+                      onClick={() => {
+                        setTranscodeBitrateKbps(192)
+                        setTranscodeContainer('mp3')
+                        setTranscodeProtocol('http')
+                        setTranscodeChannels(2)
+                      }}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      className={isTranscodingEnabled ? '' : 'off-btn'}
+                      onClick={() => setIsTranscodingEnabled((prev: boolean) => !prev)}
+                    >
+                      {isTranscodingEnabled ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {isTranscodingExpanded && (
+                    <motion.div
+                      className="menu-content"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                    >
+                      <label>
+                        <div className="label-header">
+                          <span>Max bitrate (kbps)</span>
+                          <input
+                            type="number"
+                            className="param-input"
+                            min="4"
+                            max="320"
+                            step="4"
+                            value={transcodeBitrateKbps}
+                            onChange={(event) => setTranscodeBitrateKbps(Math.max(4, Math.min(320, Number(event.target.value))))}
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={4}
+                          max={320}
+                          step={4}
+                          value={transcodeBitrateKbps}
+                          onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
+                        />
+                      </label>
+
+                      <label>
+                        Container
+                        <select
+                          value={transcodeContainer}
+                          onChange={(event) => setTranscodeContainer(event.target.value as 'mp3' | 'aac' | 'opus')}
+                        >
+                          <option value="mp3">MP3</option>
+                          <option value="aac">AAC</option>
+                          <option value="opus">Opus</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        Protocol
+                        <select
+                          value={transcodeProtocol}
+                          onChange={(event) => setTranscodeProtocol(event.target.value as 'http' | 'hls')}
+                        >
+                          <option value="http">HTTP</option>
+                          <option value="hls">HLS</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        Channels
+                        <select
+                          value={transcodeChannels}
+                          onChange={(event) => setTranscodeChannels(Number(event.target.value) as 1 | 2)}
+                        >
+                          <option value={1}>Mono</option>
+                          <option value={2}>Stereo</option>
+                        </select>
+                      </label>
+
+                      <p className="subhead" style={{ marginTop: 0 }}>
+                        Session streamed data: {formatBytes(sessionDataBytes)}
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            </form>
+
+              <div className="control-card">
+                <div className={`menu-head ${isCachingExpanded ? 'expanded' : ''}`}>
+                  <h2 onClick={() => setIsCachingExpanded((prev: boolean) => !prev)}>Caching</h2>
+                </div>
+
+                <AnimatePresence>
+                  {isCachingExpanded && (
+                    <motion.div
+                      className="menu-content"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                    >
+                      <label>
+                        Strategy
+                        <select
+                          value={cachingMode}
+                          onChange={(event) => setCachingMode(event.target.value as CacheMode)}
+                        >
+                          <option value="queue-nearby-random">Queue + Nearby + Random</option>
+                          <option value="queue-nearby">Queue + Nearby</option>
+                          <option value="queue-only">Queue Only</option>
+                          <option value="none">None</option>
+                        </select>
+                      </label>
+
+                      <label className="inline-switch">
+                        <input
+                          type="checkbox"
+                          checked={isCacheLimitTextOnly}
+                          onChange={(event) => setIsCacheLimitTextOnly(event.target.checked)}
+                        />
+                        Text-only cache limit editor
+                      </label>
+
+                      <label>
+                        Cache limit (MB)
+                        <input
+                          type="number"
+                          className="param-input"
+                          min={64}
+                          max={128000}
+                          step={64}
+                          value={Math.round(cacheLimitMb)}
+                          onChange={(event) => setCacheLimitMb(Math.max(64, Number(event.target.value) || 4096))}
+                        />
+                      </label>
+
+                      {!isCacheLimitTextOnly && (
+                        <input
+                          type="range"
+                          min={64}
+                          max={128000}
+                          step={64}
+                          value={cacheLimitMb}
+                          onChange={(event) => setCacheLimitMb(Number(event.target.value))}
+                        />
+                      )}
+
+                      <p className="subhead" style={{ marginTop: 0 }}>
+                        Cached songs: {cachedTracks.length} ({formatBytes(cachedTracks.reduce((sum, item) => sum + item.bytes, 0))})
+                      </p>
+
+                      {cachedTracks.length === 0 ? (
+                        <div className="empty-state">No tracks cached in this session.</div>
+                      ) : (
+                        <div className="queue-list">
+                          {cachedTracks.map((cached) => (
+                            <div key={cached.id} className="queue-item">
+                              <div className="info">
+                                <div className="name">{cached.name}</div>
+                              </div>
+                              <span className="track-time">{formatBytes(cached.bytes)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="control-card">
+                <div className={`menu-head ${isStatsExpanded ? 'expanded' : ''}`}>
+                  <h2 onClick={() => setIsStatsExpanded((prev: boolean) => !prev)}>Stats</h2>
+                </div>
+
+                <AnimatePresence>
+                  {isStatsExpanded && (
+                    <motion.div
+                      className="menu-content"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                    >
+                      <p className="subhead">Data Streamed (Total): {formatBytes(totalDataBytes)}</p>
+                      <p className="subhead">Data Streamed (Session): {formatBytes(sessionDataBytes)}</p>
+                      <p className="subhead">Songs Played: {totalSongsPlayed} total / {sessionSongsPlayed} session</p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
           </details>
 
           <p className="status">{status}</p>
@@ -1474,106 +2034,6 @@ function App() {
           </div>
 
           <div className="control-card">
-            <div className={`menu-head ${isTranscodingExpanded ? 'expanded' : ''}`}>
-              <h2 onClick={() => setIsTranscodingExpanded((prev: boolean) => !prev)}>Transcoding</h2>
-              <div className="menu-actions">
-                <button
-                  type="button"
-                  className="reset-btn"
-                  onClick={() => {
-                    setTranscodeBitrateKbps(192)
-                    setTranscodeContainer('mp3')
-                    setTranscodeProtocol('http')
-                    setTranscodeChannels(2)
-                  }}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  className={isTranscodingEnabled ? '' : 'off-btn'}
-                  onClick={() => setIsTranscodingEnabled((prev: boolean) => !prev)}
-                >
-                  {isTranscodingEnabled ? 'On' : 'Off'}
-                </button>
-              </div>
-            </div>
-
-            <AnimatePresence>
-              {isTranscodingExpanded && (
-                <motion.div
-                  className="menu-content"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2, ease: 'easeOut' }}
-                >
-                  <label>
-                    <div className="label-header">
-                      <span>Max bitrate (kbps)</span>
-                      <input
-                        type="number"
-                        className="param-input"
-                        min="4"
-                        max="320"
-                        step="4"
-                        value={transcodeBitrateKbps}
-                        onChange={(event) => setTranscodeBitrateKbps(Math.max(4, Math.min(320, Number(event.target.value))))}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={4}
-                      max={320}
-                      step={4}
-                      value={transcodeBitrateKbps}
-                      onChange={(event) => setTranscodeBitrateKbps(Number(event.target.value))}
-                    />
-                  </label>
-
-                  <label>
-                    Container
-                    <select
-                      value={transcodeContainer}
-                      onChange={(event) => setTranscodeContainer(event.target.value as 'mp3' | 'aac' | 'opus')}
-                    >
-                      <option value="mp3">MP3</option>
-                      <option value="aac">AAC</option>
-                      <option value="opus">Opus</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Protocol
-                    <select
-                      value={transcodeProtocol}
-                      onChange={(event) => setTranscodeProtocol(event.target.value as 'http' | 'hls')}
-                    >
-                      <option value="http">HTTP</option>
-                      <option value="hls">HLS</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Channels
-                    <select
-                      value={transcodeChannels}
-                      onChange={(event) => setTranscodeChannels(Number(event.target.value) as 1 | 2)}
-                    >
-                      <option value={1}>Mono</option>
-                      <option value={2}>Stereo</option>
-                    </select>
-                  </label>
-
-                  <p className="subhead" style={{ marginTop: 0 }}>
-                    Enable this to stream and cache lower-bitrate tracks and save bandwidth.
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="control-card">
             <div className={`menu-head ${isSpeedExpanded ? 'expanded' : ''}`}>
               <h2 onClick={() => setIsSpeedExpanded((prev: boolean) => !prev)}>Speed</h2>
               <div className="menu-actions">
@@ -1606,25 +2066,38 @@ function App() {
                   exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '0.5rem' }}>
-                    <Knob
-                      label="Speed %"
-                      value={speedPercent / 100}
-                      min={0.6}
-                      max={1.6}
-                      step={0.01}
-                      onChange={(val) => setSpeedPercent(val * 100)}
-                      onReset={() => setSpeedPercent(100)}
-                    />
-
-                    <label className="inline-switch">
-                      <input
-                        type="checkbox"
-                        checked={adjustPitch}
-                        onChange={(event) => setAdjustPitch(event.target.checked)}
+                  <div style={{ display: 'flex', alignItems: 'stretch', gap: '1rem', marginBottom: '0.5rem' }}>
+                    <div style={{ flex: '0 0 33%', display: 'flex', alignItems: 'center' }}>
+                      <Knob
+                        label="Speed %"
+                        value={speedPercent / 100}
+                        min={0.6}
+                        max={1.6}
+                        step={0.01}
+                        onChange={(val) => setSpeedPercent(val * 100)}
+                        onReset={() => setSpeedPercent(100)}
                       />
-                      Adjust Pitch
-                    </label>
+                    </div>
+
+                    <div style={{ flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'space-around' }}>
+                      <label className="inline-switch">
+                        <input
+                          type="checkbox"
+                          checked={adjustPitch}
+                          onChange={(event) => setAdjustPitch(event.target.checked)}
+                        />
+                        Adjust Pitch
+                      </label>
+
+                      <label className="inline-switch">
+                        <input
+                          type="checkbox"
+                          checked={isPlaybackEcoMode}
+                          onChange={(event) => setIsPlaybackEcoMode(event.target.checked)}
+                        />
+                        Performance Saver
+                      </label>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -1709,6 +2182,15 @@ function App() {
                       onReset={() => setLowPassQ(0.80)}
                     />
                   </div>
+
+                  <label className="inline-switch" style={{ margin: '0 auto' }}>
+                    <input
+                      type="checkbox"
+                      checked={isReduceClippingEnabled}
+                      onChange={(event) => setIsReduceClippingEnabled(event.target.checked)}
+                    />
+                    Reduce Clipping
+                  </label>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1827,7 +2309,7 @@ function App() {
           </div>
 
           <header className="library-head">
-            <h2>Library Carousel</h2>
+            <h2>Library</h2>
             <div className="library-actions">
               <button
                 type="button"
@@ -1924,6 +2406,33 @@ function App() {
               onPrev={() => { void handleRestartOrPrev() }}
               disabled={!selectedTrack}
             />
+            <button
+              type="button"
+              className="ghost fullscreen-icon-btn mobile-fullscreen-btn"
+              onClick={() => { void toggleFullscreenMode() }}
+              title={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+              aria-label={isFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+            >
+              {isFullscreenActive ? (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 3 3 3 3 9" />
+                  <line x1="3" y1="3" x2="10" y2="10" />
+                  <polyline points="15 21 21 21 21 15" />
+                  <line x1="14" y1="14" x2="21" y2="21" />
+                  <polyline points="21 9 21 3 15 3" />
+                  <line x1="21" y1="3" x2="14" y2="10" />
+                  <polyline points="3 15 3 21 9 21" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 3 21 3 21 9" />
+                  <polyline points="9 21 3 21 3 15" />
+                  <polyline points="21 15 21 21 15 21" />
+                  <polyline points="3 9 3 3 9 3" />
+                </svg>
+              )}
+            </button>
           </div>
 
           <div className={`player-right ${isVolumeHidden ? 'hidden' : ''}`}>
