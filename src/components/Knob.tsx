@@ -8,14 +8,25 @@ interface KnobProps {
   step?: number
   onChange: (val: number) => void
   onReset?: () => void
+  horizontalSwipe?: boolean
 }
 
-export function Knob({ label, value, min, max, step = 1, onChange, onReset }: KnobProps) {
+export function Knob({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  onReset,
+  horizontalSwipe = false,
+}: KnobProps) {
   const [isDragging, setIsDragging] = useState(false)
-  const dragMode = useRef<'linear' | 'circular' | null>(null)
+  const dragMode = useRef<'linear' | 'horizontal' | 'circular' | null>(null)
   const knobRef = useRef<HTMLDivElement>(null)
   
   const startPos = useRef({ x: 0, y: 0 })
+  const prevX = useRef(0)
   const prevY = useRef(0)
   const prevAngle = useRef(0)
   const center = useRef({ x: 0, y: 0 })
@@ -48,6 +59,7 @@ export function Knob({ label, value, min, max, step = 1, onChange, onReset }: Kn
     }
 
     startPos.current = { x: e.clientX, y: e.clientY }
+    prevX.current = e.clientX
     prevY.current = e.clientY
     prevAngle.current = getCssAngle(e.clientX, e.clientY)
   }
@@ -61,7 +73,9 @@ export function Knob({ label, value, min, max, step = 1, onChange, onReset }: Kn
         const deltaYTotal = Math.abs(e.clientY - startPos.current.y)
         
         if (deltaXTotal > 3 || deltaYTotal > 3) {
-          if (deltaYTotal > deltaXTotal * 2) {
+          if (horizontalSwipe && deltaXTotal > deltaYTotal * 1.3) {
+            dragMode.current = 'horizontal'
+          } else if (deltaYTotal > deltaXTotal * 2) {
             dragMode.current = 'linear'
           } else {
             dragMode.current = 'circular'
@@ -77,6 +91,12 @@ export function Knob({ label, value, min, max, step = 1, onChange, onReset }: Kn
         const newValue = value - (deltaY * sensitivity)
         onChange(Math.max(min, Math.min(max, newValue)))
         prevY.current = e.clientY
+      } else if (dragMode.current === 'horizontal') {
+        const deltaX = e.clientX - prevX.current
+        const sensitivity = 0.5 * (max - min) / 100
+        const newValue = value + (deltaX * sensitivity)
+        onChange(Math.max(min, Math.min(max, newValue)))
+        prevX.current = e.clientX
       } else if (dragMode.current === 'circular') {
         const currentAngle = getCssAngle(e.clientX, e.clientY)
         let deltaAngle = currentAngle - prevAngle.current
@@ -105,6 +125,7 @@ export function Knob({ label, value, min, max, step = 1, onChange, onReset }: Kn
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     
     // Sensitivity tuning: adjust based on step or total range
     const stepSize = step || (max - min) / 100
@@ -118,7 +139,13 @@ export function Knob({ label, value, min, max, step = 1, onChange, onReset }: Kn
   const dashOffset = SVG_DASH_MAX - (percentage * SVG_DASH_MAX)
 
   return (
-    <div className="knob-container">
+    <div
+      className="knob-container"
+      onWheel={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+    >
       <span className="knob-label">{label}</span>
       <div className="knob-wrapper">
         <svg className="knob-ring" viewBox="0 0 100 100">
@@ -147,6 +174,10 @@ export function Knob({ label, value, min, max, step = 1, onChange, onReset }: Kn
         className="knob-input param-input" 
         step="any"
         value={label.includes('%') ? Math.round(value * 100) : Number(value.toFixed(2))} 
+        onWheel={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+        }}
         onChange={(e) => {
           const val = Number(e.target.value)
           onChange(label.includes('%') ? val / 100 : val)

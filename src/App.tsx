@@ -95,9 +95,7 @@ function App() {
   const [isSpeedExpanded, setIsSpeedExpanded] = useState(true)
   const [isLowPassExpanded, setIsLowPassExpanded] = useState(true)
   const [isPhaserExpanded, setIsPhaserExpanded] = useState(true)
-  const [isEelExpanded, setIsEelExpanded] = useState(true)
-  const [isEelEnabled, setIsEelEnabled] = useState(false)
-  const [eelFile, setEelFile] = useState<File | null>(null)
+  const [isVolumeHidden, setIsVolumeHidden] = useState(false)
   
   const [queue, setQueue] = useState<JellyfinAudioItem[]>(() => {
     const savedQueue = localStorage.getItem('jellyfindsp.queue')
@@ -864,15 +862,22 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth <= 768) {
-        setMasterVolume(1);
+    const volumeHideBreakpoint = 1160
+
+    const syncVolumeVisibility = () => {
+      const shouldHideVolume = window.innerWidth <= volumeHideBreakpoint
+      setIsVolumeHidden(shouldHideVolume)
+
+      if (shouldHideVolume) {
+        setMasterVolume(1)
       }
-    };
-    window.addEventListener('resize', handleResize);
-    handleResize(); // trigger on mount
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    }
+
+    window.addEventListener('resize', syncVolumeVisibility)
+    syncVolumeVisibility()
+
+    return () => window.removeEventListener('resize', syncVolumeVisibility)
+  }, [])
 
   useEffect(() => {
     if (serverUrl) {
@@ -913,7 +918,7 @@ function App() {
         return
       }
 
-      scrubberCtx.fillStyle = 'rgba(8, 16, 31, 0.88)'
+      scrubberCtx.fillStyle = 'rgba(8, 16, 31, 0.28)'
       scrubberCtx.fillRect(0, 0, size.width, size.height)
 
       const localDuration = durationRef.current
@@ -932,8 +937,8 @@ function App() {
 
         scrubberCtx.fillStyle =
           barProgress <= progress
-            ? 'rgba(255, 159, 47, 0.95)'
-            : 'rgba(214, 223, 236, 0.72)'
+            ? 'rgba(255, 159, 47, 0.5)'
+            : 'rgba(214, 223, 236, 0.26)'
         scrubberCtx.fillRect(x, y, barWidth, barHeight)
       }
 
@@ -1502,60 +1507,36 @@ function App() {
               )}
             </AnimatePresence>
           </div>
-
-          <div className="control-card">
-            <div className={`menu-head ${isEelExpanded ? 'expanded' : ''}`}>
-              <h2 onClick={() => setIsEelExpanded((prev) => !prev)}>EEL Script (Experimental)</h2>
-              <div className="menu-actions">
-                <button
-                  type="button"
-                  className={isEelEnabled ? '' : 'off-btn'}
-                  onClick={() => setIsEelEnabled((prev) => !prev)}
-                >
-                  {isEelEnabled ? 'On' : 'Off'}
-                </button>
-              </div>
-            </div>
-
-            <AnimatePresence>
-              {isEelExpanded && (
-                <motion.div
-                  className="menu-content"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2, ease: 'easeOut' }}
-                >
-                  <label>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '4px', display: 'block' }}>Upload JamesDSP .eel file</span>
-                    <input 
-                      type="file" 
-                      accept=".eel" 
-                      style={{ fontSize: '0.8rem', color: 'var(--text-dim)', width: '100%' }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setEelFile(file);
-                          setIsEelEnabled(true);
-                        }
-                      }}
-                    />
-                  </label>
-                  {eelFile && (
-                    <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--accent)' }}>
-                      Loaded: {eelFile.name}
-                    </div>
-                  )}
-                  <div style={{ marginTop: '8px', fontSize: '0.75rem', color: 'rgba(255,100,100,0.8)' }}>
-                    Note: Native EEL compilation requires a WebAssembly module. This is a local session stub.
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
         </section>
 
         <section className="panel right-panel">
+          <canvas
+            ref={scrubberCanvasRef}
+            className="carousel-intensity-backdrop"
+            onMouseDown={scrubFromPointer}
+            onTouchStart={(e) => {
+              const touch = e.touches[0]
+              const fakeEvent = {
+                clientX: touch.clientX,
+                currentTarget: e.currentTarget,
+              } as unknown as React.MouseEvent<HTMLCanvasElement>
+              scrubFromPointer(fakeEvent)
+            }}
+            onTouchMove={(e) => {
+              const touch = e.touches[0]
+              const fakeEvent = {
+                clientX: touch.clientX,
+                currentTarget: e.currentTarget,
+              } as unknown as React.MouseEvent<HTMLCanvasElement>
+              scrubFromPointer(fakeEvent)
+            }}
+            onMouseMove={(event) => {
+              if (event.buttons === 1) {
+                scrubFromPointer(event)
+              }
+            }}
+          />
+
           <header className="library-head">
             <h2>Library Carousel</h2>
             <div className="library-actions">
@@ -1625,29 +1606,6 @@ function App() {
       </main>
 
       <aside className="bottom-player-bar">
-        <div className="scrubber-container">
-          <canvas
-            ref={scrubberCanvasRef}
-            className="waveform-canvas touch-scrubber"
-            onMouseDown={scrubFromPointer}
-            onTouchStart={(e) => {
-              const touch = e.touches[0];
-              const fakeEvent = { clientX: touch.clientX, currentTarget: e.currentTarget } as unknown as React.MouseEvent;
-              scrubFromPointer(fakeEvent);
-            }}
-            onTouchMove={(e) => {
-              const touch = e.touches[0];
-              const fakeEvent = { clientX: touch.clientX, currentTarget: e.currentTarget } as unknown as React.MouseEvent;
-              scrubFromPointer(fakeEvent);
-            }}
-            onMouseMove={(event) => {
-              if (event.buttons === 1) {
-                scrubFromPointer(event)
-              }
-            }}
-          />
-        </div>
-        
         <div className="player-bar-content">
           <div className="player-left">
             {selectedTrack && (
@@ -1660,6 +1618,9 @@ function App() {
                 <div className="player-meta">
                   <div className="player-track-name">{selectedTrack.Name}</div>
                   <div className="player-artist-name">{selectedTrack.Artists?.join(', ') || selectedTrack.Album || 'Unknown artist'}</div>
+                  <div className="time-display">
+                    {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
+                  </div>
                 </div>
               </>
             )}
@@ -1674,22 +1635,22 @@ function App() {
               onPrev={() => { void handleRestartOrPrev() }}
               disabled={!selectedTrack}
             />
-            <div className="time-display">
-              {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
-            </div>
           </div>
 
-          <div className="player-right">
-             <div className="player-volume">
+          <div className={`player-right ${isVolumeHidden ? 'hidden' : ''}`}>
+            {!isVolumeHidden && (
+              <div className="player-volume">
                 <Knob
                   label="Volume"
                   value={masterVolume}
                   min={0}
                   max={1}
                   step={0.01}
+                  horizontalSwipe
                   onChange={(val) => setMasterVolume(val)}
                 />
-             </div>
+              </div>
+            )}
           </div>
         </div>
       </aside>
