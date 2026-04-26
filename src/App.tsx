@@ -158,7 +158,7 @@ function App() {
   const [isPhaserExpanded, setIsPhaserExpanded] = useState(false)
   const [isQueueExpanded, setIsQueueExpanded] = useState(initialSettings.isQueueExpanded ?? true)
   const [isTranscodingExpanded, setIsTranscodingExpanded] = useState(false)
-  const [isTranscodingEnabled, setIsTranscodingEnabled] = useState(initialSettings.isTranscodingEnabled ?? false)
+  const [isTranscodingEnabled, setIsTranscodingEnabled] = useState(initialSettings.isTranscodingEnabled ?? true)
   const [transcodeBitrateKbps, setTranscodeBitrateKbps] = useState(initialSettings.transcodeBitrateKbps ?? 192)
   const [transcodeContainer, setTranscodeContainer] = useState<'mp3' | 'aac' | 'opus'>(initialSettings.transcodeContainer ?? 'mp3')
   const [transcodeProtocol, setTranscodeProtocol] = useState<'http' | 'hls'>(initialSettings.transcodeProtocol ?? 'http')
