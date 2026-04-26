@@ -120,6 +120,12 @@ const initialSettings = (() => {
   return {}
 })()
 
+const PERSISTENT_ERROR_HINT = '\n\nTry reloging if this persists.'
+
+function withPersistentErrorHint(message: string): string {
+  return `${message}${PERSISTENT_ERROR_HINT}`
+}
+
 function App() {
   const initialStats = loadPersistedStats()
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL)
@@ -174,7 +180,6 @@ function App() {
   const [sessionSongsPlayed, setSessionSongsPlayed] = useState(0)
   const [totalSongsPlayed, setTotalSongsPlayed] = useState(initialStats.totalSongsPlayed)
   const [isPlaybackEcoMode, setIsPlaybackEcoMode] = useState(initialSettings.isPlaybackEcoMode ?? false)
-  const [isVolumeHidden, setIsVolumeHidden] = useState(false)
   const [isFullscreenActive, setIsFullscreenActive] = useState(false)
   
   const [queue, setQueue] = useState<JellyfinAudioItem[]>(() => {
@@ -848,24 +853,36 @@ function App() {
         !authOverride
 
       if (shouldRetryAuth) {
-        try {
-          setStatus('Search endpoint returned 404. Re-authenticating and retrying...')
-          const refreshed = await authenticate(serverUrl, username, password)
-          setToken(refreshed.AccessToken)
-          setUserId(refreshed.User.Id)
-          await loadTracks(query, {
-            token: refreshed.AccessToken,
-            userId: refreshed.User.Id,
-          }, fetchOptions)
-          return
-        } catch (retryError) {
-          setStatus(`Re-auth failed after 404: ${(retryError as Error).message}`)
-          return
+        const maxAttempts = 3
+        let lastRetryError: Error | null = null
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          try {
+            setStatus(`Search endpoint returned 404. Re-authenticating (attempt ${attempt}/${maxAttempts})...`)
+            const refreshed = await authenticate(serverUrl, username, password)
+            setToken(refreshed.AccessToken)
+            setUserId(refreshed.User.Id)
+            await loadTracks(query, {
+              token: refreshed.AccessToken,
+              userId: refreshed.User.Id,
+            }, fetchOptions)
+            return
+          } catch (retryError) {
+            lastRetryError = retryError as Error
+            if (attempt < maxAttempts) {
+              await new Promise<void>((resolve) => {
+                window.setTimeout(resolve, 2000)
+              })
+            }
+          }
         }
+
+        setStatus(withPersistentErrorHint(`Re-auth failed after 3 attempts: ${lastRetryError?.message ?? 'Unknown error'}`))
+        return
       }
 
       if (currentSearchId === lastSearchIdRef.current) {
-        setStatus(`Failed to load tracks: ${(error as Error).message}`)
+        setStatus(withPersistentErrorHint(`Failed to load tracks: ${(error as Error).message}`))
       }
     } finally {
       if (currentSearchId === lastSearchIdRef.current) {
@@ -909,7 +926,7 @@ function App() {
         userId: result.User.Id,
       })
     } catch (error) {
-      setStatus(`Authentication failed: ${(error as Error).message}`)
+      setStatus(withPersistentErrorHint(`Authentication failed: ${(error as Error).message}`))
       setToken('')
       setUserId('')
     }
@@ -1030,7 +1047,7 @@ function App() {
         error instanceof Error && error.message
           ? error.message
           : 'Unknown playback failure'
-      setStatus(`Playback failed: ${reason}`)
+      setStatus(withPersistentErrorHint(`Playback failed: ${reason}`))
     }
   }
 
@@ -1339,24 +1356,6 @@ function App() {
       cancelAnimationFrame(rafId)
     }
   }, [isFullscreenActive])
-
-  useEffect(() => {
-    const volumeHideBreakpoint = 1160
-
-    const syncVolumeVisibility = () => {
-      const shouldHideVolume = window.innerWidth <= volumeHideBreakpoint
-      setIsVolumeHidden(shouldHideVolume)
-
-      if (shouldHideVolume) {
-        setMasterVolume(1)
-      }
-    }
-
-    window.addEventListener('resize', syncVolumeVisibility)
-    syncVolumeVisibility()
-
-    return () => window.removeEventListener('resize', syncVolumeVisibility)
-  }, [])
 
   useEffect(() => {
     if (isFullscreenActive) {
@@ -1715,7 +1714,7 @@ function App() {
         await audio.play()
         setIsPlaying(true)
       } catch {
-        setStatus('Click the page once to unlock audio playback.')
+        setStatus(withPersistentErrorHint('Click the page once to unlock audio playback.'))
       }
       return
     }
@@ -2074,7 +2073,7 @@ function App() {
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.2, ease: 'easeOut' }}
                     >
-                      <p className="subhead">Data Streamed (Total): {formatBytes(totalDataBytes)}</p>
+                      <p className="subhead">Data Streamed (Lifetime): {formatBytes(totalDataBytes)}</p>
                       <p className="subhead">Data Streamed (Session): {formatBytes(sessionDataBytes)} ({sessionSongsPlayed} songs)</p>
                       <p className="subhead">Songs Played: {totalSongsPlayed} total / {sessionSongsPlayed} session</p>
                     </motion.div>
@@ -2543,18 +2542,16 @@ function App() {
           </div>
 
           <div className="player-right">
-            {!isVolumeHidden && (
-              <div className="player-volume">
-                <Knob
-                  label="Volume"
-                  value={masterVolume}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onChange={(val) => setMasterVolume(val)}
-                />
-              </div>
-            )}
+            <div className="player-volume">
+              <Knob
+                label="Volume"
+                value={masterVolume}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(val) => setMasterVolume(val)}
+              />
+            </div>
             <FullscreenButton
               isActive={isFullscreenActive}
               onToggle={() => { void toggleFullscreenMode() }}
