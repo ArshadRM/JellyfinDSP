@@ -29,6 +29,7 @@ type CachedTrackInfo = {
   id: string
   name: string
   bytes: number
+  source?: 'buffered' | 'playback'
   isCurrent?: boolean
 }
 
@@ -269,23 +270,39 @@ function App() {
       return cachedTracks
     }
 
+    const withCurrentFlag = cachedTracks.map((entry) => (
+      entry.id === selectedTrack.Id
+        ? { ...entry, isCurrent: true }
+        : entry
+    ))
+
+    if (withCurrentFlag.some((entry) => entry.id === selectedTrack.Id)) {
+      return withCurrentFlag
+    }
+
     const currentCached = cachedTrackInfoRef.current[selectedTrack.Id]
     if (!currentCached) {
-      return cachedTracks
+      return withCurrentFlag
     }
 
-    const currentEntry: CachedTrackInfo = {
-      id: selectedTrack.Id,
-      name: selectedTrack.Name,
-      bytes: currentCached.bytes,
-      isCurrent: true,
+    return [{ ...currentCached, isCurrent: true }, ...withCurrentFlag]
+  }
+
+  function normalizeWaveformSamples(input: number[]): number[] {
+    if (!input.length) {
+      return []
     }
 
-    if (cachedTracks.some((entry) => entry.id === currentEntry.id)) {
-      return cachedTracks
+    const amplitudes = input.map((sample) => Math.abs(Number(sample) || 0))
+    const maxAmplitude = Math.max(...amplitudes)
+    if (!Number.isFinite(maxAmplitude) || maxAmplitude <= 0) {
+      return []
     }
 
-    return [currentEntry, ...cachedTracks]
+    return amplitudes.map((amplitude) => {
+      const normalized = amplitude / maxAmplitude
+      return Math.min(1, Math.max(0.02, normalized))
+    })
   }
 
   function getProtectedCacheIds(): Set<string> {
@@ -336,9 +353,12 @@ function App() {
     cacheOrderRef.current = cacheOrderRef.current.filter((id) => id !== trackId)
   }
 
-  function pruneBufferedCache(limitOverrideMb?: number): void {
+  function pruneBufferedCache(limitOverrideMb?: number, keepTrackId?: string): void {
     if (cachingMode === 'none') {
       for (const trackId of [...cacheOrderRef.current]) {
+        if (trackId === selectedTrack?.Id || trackId === keepTrackId) {
+          continue
+        }
         evictCacheEntry(trackId)
       }
       syncCachedTracksState()
@@ -391,16 +411,29 @@ function App() {
       }
 
       const data = await response.json()
-      // Jellyfin samples are typically integers (0-255 or similar)
-      const samples: number[] = data.Samples || []
-      
-      if (samples.length === 0) return new Array(260).fill(0.18)
+      const maybeSamples =
+        Array.isArray(data) ? data
+          : Array.isArray(data?.Samples) ? data.Samples
+            : Array.isArray(data?.samples) ? data.samples
+              : []
 
-      const maxSample = Math.max(...samples) || 1
-      return samples.map(s => s / maxSample)
+      const normalized = normalizeWaveformSamples(maybeSamples as number[])
+      if (normalized.length > 0) {
+        return normalized
+      }
+
+      return new Array(260).fill(0).map((_, i) => {
+        const wave = Math.sin((i / 260) * Math.PI * 6) * 0.16
+        const envelope = 0.22 + (i / 260) * 0.18
+        return Math.max(0.08, Math.min(0.92, envelope + wave))
+      })
     } catch (err) {
       console.warn('Failed to fetch server-side waveform, using fallback:', err)
-      return new Array(260).fill(0.18)
+      return new Array(260).fill(0).map((_, i) => {
+        const wave = Math.sin((i / 260) * Math.PI * 5) * 0.12
+        const envelope = 0.26 + (i / 260) * 0.14
+        return Math.max(0.1, Math.min(0.9, envelope + wave))
+      })
     }
   }
 
@@ -409,10 +442,6 @@ function App() {
   }
 
   async function ensureTrackBuffered(trackId: string): Promise<void> {
-    if (cachingMode === 'none') {
-      return
-    }
-
     if (bufferedTrackUrlCacheRef.current[trackId] || bufferingTasksRef.current[trackId]) {
       return
     }
@@ -424,7 +453,7 @@ function App() {
 
     const task = (async () => {
       try {
-        pruneBufferedCache(cacheLimitMb)
+        pruneBufferedCache(cacheLimitMb, trackId)
 
         const sid = Math.random().toString(36).substring(2, 10)
         const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions, sid)
@@ -451,9 +480,10 @@ function App() {
           id: trackId,
           name: trackName,
           bytes,
+          source: 'buffered',
         }
         cacheOrderRef.current = [...cacheOrderRef.current.filter((id) => id !== trackId), trackId]
-        pruneBufferedCache(cacheLimitMb)
+        pruneBufferedCache(cacheLimitMb, trackId)
       } finally {
         delete bufferingTasksRef.current[trackId]
       }
@@ -881,8 +911,8 @@ function App() {
       })
     }
 
-    if (cachingMode !== 'none' && !bufferedTrackUrlCacheRef.current[track.Id]) {
-      setStatus(`Buffering ${track.Name} in the background...`)
+    if (!bufferedTrackUrlCacheRef.current[track.Id]) {
+      setStatus(`Caching current track: ${track.Name}...`)
       void ensureTrackBuffered(track.Id)
     }
 
