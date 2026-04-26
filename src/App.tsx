@@ -305,6 +305,91 @@ function App() {
     })
   }
 
+  async function getTrackAudioBlob(trackId: string): Promise<Blob> {
+    const bufferedObjectUrl = bufferedTrackUrlCacheRef.current[trackId]
+    if (bufferedObjectUrl) {
+      const bufferedResponse = await fetch(bufferedObjectUrl)
+      if (!bufferedResponse.ok) {
+        throw new Error(`Buffered audio read failed (${bufferedResponse.status})`)
+      }
+      return bufferedResponse.blob()
+    }
+
+    const sid = Math.random().toString(36).substring(2, 10)
+    const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions, sid)
+    const response = await fetch(streamUrl, {
+      headers: {
+        'X-Emby-Token': token,
+        'X-Emby-Authorization': authHeader(token),
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Audio fetch failed (${response.status})`)
+    }
+
+    const blob = await response.blob()
+    addStreamedBytes(blob.size)
+    return blob
+  }
+
+  async function decodeBlobToWaveformPeaks(blob: Blob, barCount = 260): Promise<number[]> {
+    const arrayBuffer = await blob.arrayBuffer()
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+
+    if (!AudioContextCtor) {
+      throw new Error('Web Audio API unavailable')
+    }
+
+    const context = new AudioContextCtor()
+
+    try {
+      const decoded = await context.decodeAudioData(arrayBuffer.slice(0))
+      const totalSamples = decoded.length
+      const channels = decoded.numberOfChannels
+      if (!totalSamples || !channels) {
+        return []
+      }
+
+      const rawPeaks: number[] = []
+      for (let i = 0; i < barCount; i += 1) {
+        const start = Math.floor((i / barCount) * totalSamples)
+        const end = Math.max(start + 1, Math.floor(((i + 1) / barCount) * totalSamples))
+
+        let sumSquares = 0
+        let sampleCount = 0
+        let maxAbs = 0
+
+        for (let channel = 0; channel < channels; channel += 1) {
+          const channelData = decoded.getChannelData(channel)
+          for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+            const value = channelData[sampleIndex] ?? 0
+            const absValue = Math.abs(value)
+            if (absValue > maxAbs) {
+              maxAbs = absValue
+            }
+            sumSquares += value * value
+            sampleCount += 1
+          }
+        }
+
+        const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0
+        rawPeaks.push((rms * 0.7) + (maxAbs * 0.3))
+      }
+
+      const normalized = normalizeWaveformSamples(rawPeaks)
+      if (!normalized.length) {
+        return []
+      }
+
+      return normalized.map((value) => Math.max(0.03, Math.min(1, value ** 0.78)))
+    } finally {
+      await context.close().catch(() => {})
+    }
+  }
+
   function getProtectedCacheIds(): Set<string> {
     const protectedIds = new Set<string>()
 
@@ -389,50 +474,22 @@ function App() {
     syncCachedTracksState()
   }
 
-  async function buildSongIntensityPeaks(trackId: string, authToken: string): Promise<number[]> {
-    // Using the official Jellyfin Waveform endpoint is much faster than decoding locally
-    const url = `${serverUrl}/Audio/${trackId}/WaveformSamples?api_key=${authToken}`
-    
+  async function buildSongIntensityPeaks(trackId: string): Promise<number[]> {
     try {
-      const response = await fetch(url, {
-        headers: {
-          'X-Emby-Token': authToken,
-          'X-Emby-Authorization': authHeader(authToken),
-        }
-      })
-      
-      if (!response.ok) {
-        throw new Error(`Waveform endpoint failed (${response.status})`)
+      const blob = await getTrackAudioBlob(trackId)
+      const peaks = await decodeBlobToWaveformPeaks(blob)
+      if (peaks.length > 0) {
+        return peaks
       }
 
-      const lengthHeader = Number(response.headers.get('content-length') || 0)
-      if (lengthHeader > 0) {
-        addStreamedBytes(lengthHeader)
-      }
-
-      const data = await response.json()
-      const maybeSamples =
-        Array.isArray(data) ? data
-          : Array.isArray(data?.Samples) ? data.Samples
-            : Array.isArray(data?.samples) ? data.samples
-              : []
-
-      const normalized = normalizeWaveformSamples(maybeSamples as number[])
-      if (normalized.length > 0) {
-        return normalized
-      }
-
-      return new Array(260).fill(0).map((_, i) => {
-        const wave = Math.sin((i / 260) * Math.PI * 6) * 0.16
-        const envelope = 0.22 + (i / 260) * 0.18
-        return Math.max(0.08, Math.min(0.92, envelope + wave))
-      })
+      throw new Error('Decoded waveform was empty')
     } catch (err) {
-      console.warn('Failed to fetch server-side waveform, using fallback:', err)
+      console.warn('Failed to build blob-derived waveform, using fallback:', err)
       return new Array(260).fill(0).map((_, i) => {
-        const wave = Math.sin((i / 260) * Math.PI * 5) * 0.12
-        const envelope = 0.26 + (i / 260) * 0.14
-        return Math.max(0.1, Math.min(0.9, envelope + wave))
+        const hashBase = ((trackId.charCodeAt(i % trackId.length) || 17) % 11) / 100
+        const wave = Math.sin((i / 260) * Math.PI * (4.5 + hashBase * 8)) * (0.08 + hashBase)
+        const envelope = 0.2 + (i / 260) * (0.28 + hashBase * 0.4)
+        return Math.max(0.06, Math.min(0.95, envelope + wave))
       })
     }
   }
@@ -505,7 +562,7 @@ function App() {
           return
         }
 
-        const peaks = await buildSongIntensityPeaks(trackId, token)
+        const peaks = await buildSongIntensityPeaks(trackId)
         scrubberPeakCacheRef.current[trackId] = peaks
       } finally {
         delete scrubberPeakTasksRef.current[trackId]
