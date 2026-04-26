@@ -29,6 +29,7 @@ type CachedTrackInfo = {
   id: string
   name: string
   bytes: number
+  isCurrent?: boolean
 }
 
 type PersistedStats = {
@@ -221,6 +222,7 @@ function App() {
   const totalDataBytesRef = useRef(initialStats.totalDataBytes)
   const totalSongsPlayedRef = useRef(initialStats.totalSongsPlayed)
   const engineRef = useRef(new AudioEngine())
+  const playbackRequestIdRef = useRef(0)
   const lastSearchIdRef = useRef(0)
   const draggedItemRef = useRef<number | null>(null)
 
@@ -256,6 +258,34 @@ function App() {
       .map((id) => cachedTrackInfoRef.current[id])
       .filter((entry): entry is CachedTrackInfo => Boolean(entry))
     setCachedTracks(ordered)
+  }
+
+  function getPlaybackDuration(): number {
+    return expectedDurationRef.current || durationRef.current || 0
+  }
+
+  function getDisplayedCachedTracks(): CachedTrackInfo[] {
+    if (!selectedTrack) {
+      return cachedTracks
+    }
+
+    const currentCached = cachedTrackInfoRef.current[selectedTrack.Id]
+    if (!currentCached) {
+      return cachedTracks
+    }
+
+    const currentEntry: CachedTrackInfo = {
+      id: selectedTrack.Id,
+      name: selectedTrack.Name,
+      bytes: currentCached.bytes,
+      isCurrent: true,
+    }
+
+    if (cachedTracks.some((entry) => entry.id === currentEntry.id)) {
+      return cachedTracks
+    }
+
+    return [currentEntry, ...cachedTracks]
   }
 
   function getProtectedCacheIds(): Set<string> {
@@ -364,13 +394,13 @@ function App() {
       // Jellyfin samples are typically integers (0-255 or similar)
       const samples: number[] = data.Samples || []
       
-      if (samples.length === 0) return new Array(260).fill(0)
+      if (samples.length === 0) return new Array(260).fill(0.18)
 
       const maxSample = Math.max(...samples) || 1
       return samples.map(s => s / maxSample)
     } catch (err) {
       console.warn('Failed to fetch server-side waveform, using fallback:', err)
-      return new Array(260).fill(0)
+      return new Array(260).fill(0.18)
     }
   }
 
@@ -604,9 +634,9 @@ function App() {
   function handleSeek(delta: number): void {
     const audio = audioRef.current
     if (!audio) return
-    const newTime = Math.min(audio.duration, Math.max(0, audio.currentTime + delta))
-    audio.currentTime = newTime
-    setCurrentTime(newTime)
+    const baseTime = Number.isFinite(audio.currentTime) ? audio.currentTime : currentTimeRef.current
+    const maxTime = getPlaybackDuration() || (Number.isFinite(audio.duration) ? audio.duration : 0)
+    handleScrub(Math.min(maxTime, Math.max(0, baseTime + delta)))
   }
 
   async function handleRestartOrPrev(): Promise<void> {
@@ -798,6 +828,7 @@ function App() {
   }
 
   function handleLogout(): void {
+    playbackRequestIdRef.current += 1
     setToken('')
     setUserId('')
     setTracks([])
@@ -830,6 +861,8 @@ function App() {
       return
     }
 
+    const requestId = ++playbackRequestIdRef.current
+
     const sid = Math.random().toString(36).substring(2, 10)
     const streamUrl = buildStreamUrl(serverUrl, track.Id, token, userId, transcodingOptions, sid)
     setSelectedTrack(track)
@@ -849,12 +882,8 @@ function App() {
     }
 
     if (cachingMode !== 'none' && !bufferedTrackUrlCacheRef.current[track.Id]) {
-      setStatus(`Buffering ${track.Name}...`)
-      try {
-        await ensureTrackBuffered(track.Id)
-      } catch {
-        // Fall back to stream URL if full buffering fails.
-      }
+      setStatus(`Buffering ${track.Name} in the background...`)
+      void ensureTrackBuffered(track.Id)
     }
 
     const bufferedUrl = bufferedTrackUrlCacheRef.current[track.Id]
@@ -869,6 +898,10 @@ function App() {
     } else {
       audio.playbackRate = effectiveRate
       applyPreservePitch(audio, tempoMultiplier !== 1 && !isPlaybackEcoMode)
+    }
+
+    if (requestId !== playbackRequestIdRef.current) {
+      return
     }
 
     await engineRef.current.setupForElement(audio, {
@@ -887,6 +920,10 @@ function App() {
 
 
     try {
+      if (requestId !== playbackRequestIdRef.current) {
+        return
+      }
+
       await engineRef.current.resume()
       await audio.play()
       setIsPlaying(true)
@@ -985,10 +1022,32 @@ function App() {
       return
     }
 
-    const maxTime = Number.isFinite(audio.duration) ? audio.duration : 0
+    const maxTime = getPlaybackDuration() || (Number.isFinite(audio.duration) ? audio.duration : 0)
     const clamped = Math.min(maxTime, Math.max(0, timeSec))
+    const trackId = selectedTrack?.Id
+    const wasPlaying = !audio.paused
+    const needsBufferedPause = Boolean(trackId && cachingMode !== 'none' && !bufferedTrackUrlCacheRef.current[trackId])
+
+    if (needsBufferedPause && wasPlaying) {
+      audio.pause()
+      setIsPlaying(false)
+    }
+
     audio.currentTime = clamped
     setCurrentTime(clamped)
+
+    if (!needsBufferedPause || !trackId) {
+      return
+    }
+
+    void ensureTrackBuffered(trackId).then(() => {
+      if (audioRef.current !== audio || selectedTrack?.Id !== trackId) {
+        return
+      }
+
+      const bufferedDuration = getPlaybackDuration() || audio.duration || clamped
+      audio.currentTime = Math.min(bufferedDuration, clamped)
+    })
   }
 
   async function handleTrackEnded(): Promise<void> {
@@ -1909,17 +1968,20 @@ function App() {
                       )}
 
                       <p className="subhead" style={{ marginTop: 0 }}>
-                        Cached songs: {cachedTracks.length} ({formatBytes(cachedTracks.reduce((sum, item) => sum + item.bytes, 0))})
+                        Cached songs: {getDisplayedCachedTracks().length} ({formatBytes(getDisplayedCachedTracks().reduce((sum, item) => sum + item.bytes, 0))})
                       </p>
 
-                      {cachedTracks.length === 0 ? (
+                      {getDisplayedCachedTracks().length === 0 ? (
                         <div className="empty-state">No tracks cached in this session.</div>
                       ) : (
                         <div className="queue-list">
-                          {cachedTracks.map((cached) => (
+                          {getDisplayedCachedTracks().map((cached) => (
                             <div key={cached.id} className="queue-item">
                               <div className="info">
-                                <div className="name">{cached.name}</div>
+                                <div className="name">
+                                  {cached.name}
+                                  {cached.isCurrent ? ' (current)' : ''}
+                                </div>
                               </div>
                               <span className="track-time">{formatBytes(cached.bytes)}</span>
                             </div>
@@ -1946,7 +2008,7 @@ function App() {
                       transition={{ duration: 0.2, ease: 'easeOut' }}
                     >
                       <p className="subhead">Data Streamed (Total): {formatBytes(totalDataBytes)}</p>
-                      <p className="subhead">Data Streamed (Session): {formatBytes(sessionDataBytes)}</p>
+                      <p className="subhead">Data Streamed (Session): {formatBytes(sessionDataBytes)} ({sessionSongsPlayed} songs)</p>
                       <p className="subhead">Songs Played: {totalSongsPlayed} total / {sessionSongsPlayed} session</p>
                     </motion.div>
                   )}

@@ -17,6 +17,31 @@ export const Transport: React.FC<TransportProps> = ({
   onPrev,
   disabled
 }) => {
+  const SeekIcon = ({ direction }: { direction: 'back' | 'forward' }) => (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`seek-icon ${direction} ${direction === 'back' ? 'backward' : 'forward'}`}
+      aria-hidden="true"
+    >
+      {direction === 'back' ? (
+        <>
+          <path d="M12 5a7 7 0 1 1-7 7" />
+          <path d="M9 2L4.5 5 9 8" />
+        </>
+      ) : (
+        <>
+          <path d="M12 5a7 7 0 1 0 7 7" />
+          <path d="M15 2l4.5 3-4.5 3" />
+        </>
+      )}
+    </svg>
+  )
+
   return (
     <div className="transport-container">
       <button 
@@ -34,11 +59,8 @@ export const Transport: React.FC<TransportProps> = ({
         disabled={disabled}
         title="Back 10s"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="seek-icon">
-          <path d="M3.5 11a9 9 0 1 0 .5 4" />
-          <polyline points="1.5 12 3.5 12 3.5 10" />
-          <text x="12" y="14.5" fontSize="7" fontFamily="Rajdhani, sans-serif" fontWeight="700" textAnchor="middle" fill="currentColor" stroke="none">10</text>
-        </svg>
+        <SeekIcon direction="back" />
+        <span className="seek-badge" aria-hidden="true">10</span>
       </button>
 
       <button 
@@ -60,11 +82,8 @@ export const Transport: React.FC<TransportProps> = ({
         disabled={disabled}
         title="Forward 10s"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="seek-icon">
-          <path d="M20.5 11a9 9 0 1 1-.5 4" />
-          <polyline points="22.5 12 20.5 12 20.5 10" />
-          <text x="12" y="14.5" fontSize="7" fontFamily="Rajdhani, sans-serif" fontWeight="700" textAnchor="middle" fill="currentColor" stroke="none">10</text>
-        </svg>
+        <SeekIcon direction="forward" />
+        <span className="seek-badge" aria-hidden="true">10</span>
       </button>
 
       <button 
