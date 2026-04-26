@@ -226,6 +226,7 @@ function App() {
   const playbackRequestIdRef = useRef(0)
   const lastSearchIdRef = useRef(0)
   const draggedItemRef = useRef<number | null>(null)
+  const previousCachingModeRef = useRef<CacheMode>(cachingMode)
 
   function addStreamedBytes(bytes: number): void {
     if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -1358,19 +1359,6 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const syncFullscreenState = () => {
-      setIsFullscreenActive(Boolean(document.fullscreenElement))
-    }
-
-    document.addEventListener('fullscreenchange', syncFullscreenState)
-    syncFullscreenState()
-
-    return () => {
-      document.removeEventListener('fullscreenchange', syncFullscreenState)
-    }
-  }, [])
-
-  useEffect(() => {
     if (isFullscreenActive) {
       document.body.classList.add('is-fullscreen')
     } else {
@@ -1450,6 +1438,21 @@ function App() {
   useEffect(() => {
     persistStats(totalDataBytes, totalSongsPlayed)
   }, [totalDataBytes, totalSongsPlayed])
+
+  useEffect(() => {
+    const previousMode = previousCachingModeRef.current
+    if (previousMode === cachingMode) {
+      return
+    }
+
+    previousCachingModeRef.current = cachingMode
+    clearPreloadCache()
+    clearBufferedTrackCache()
+
+    if (selectedTrack && token && userId) {
+      void ensureTrackBuffered(selectedTrack.Id)
+    }
+  }, [cachingMode, selectedTrack, token, userId])
 
   useEffect(() => {
     pruneBufferedCache()
@@ -1612,6 +1615,11 @@ function App() {
         return
       }
 
+      if (event.key === 'F11') {
+        event.preventDefault()
+        return
+      }
+
       if (event.key === 'ArrowUp') {
         event.preventDefault()
         void handlePrevTrack()
@@ -1717,35 +1725,7 @@ function App() {
   }
 
   async function toggleFullscreenMode(): Promise<void> {
-    try {
-      if (!document.fullscreenElement) {
-        const element = document.documentElement as HTMLElement & {
-          webkitRequestFullscreen?: () => Promise<void> | void
-        }
-
-        if (element.requestFullscreen) {
-          await element.requestFullscreen()
-        } else if (element.webkitRequestFullscreen) {
-          await element.webkitRequestFullscreen()
-        } else {
-          setIsFullscreenActive(true)
-        }
-      } else {
-        const doc = document as Document & {
-          webkitExitFullscreen?: () => Promise<void> | void
-        }
-
-        if (doc.exitFullscreen) {
-          await doc.exitFullscreen()
-        } else if (doc.webkitExitFullscreen) {
-          await doc.webkitExitFullscreen()
-        } else {
-          setIsFullscreenActive(false)
-        }
-      }
-    } catch (error) {
-      setStatus(`Fullscreen failed: ${(error as Error).message}`)
-    }
+    setIsFullscreenActive((prev) => !prev)
   }
 
   const trackCards = useMemo(() => {
