@@ -115,7 +115,9 @@ const initialSettings = (() => {
   if (saved) {
     try {
       return JSON.parse(saved)
-    } catch {}
+    } catch {
+      // Ignore parsing errors
+    }
   }
   return {}
 })()
@@ -186,16 +188,18 @@ function App() {
     const savedQueue = localStorage.getItem('jellyfindsp.queue')
     const savedServer = localStorage.getItem('jellyfindsp.queueServerUrl')
     
-    // Determine the current expected server URL from session
-    const currentServer = (() => {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        try {
-          return (JSON.parse(saved) as Session).serverUrl
-        } catch {}
-      }
-      return DEFAULT_SERVER_URL
-    })()
+     // Determine the current expected server URL from session
+     const currentServer = (() => {
+       const saved = localStorage.getItem(STORAGE_KEY)
+       if (saved) {
+         try {
+           return (JSON.parse(saved) as Session).serverUrl
+         } catch {
+           // Ignore parsing errors
+         }
+       }
+       return DEFAULT_SERVER_URL
+     })()
 
     if (savedQueue && savedServer === currentServer) {
       try {
@@ -626,9 +630,13 @@ function App() {
 
     try {
       const stored = JSON.parse(raw) as Session
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setServerUrl(stored.serverUrl || DEFAULT_SERVER_URL)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUsername(stored.username || '')
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setToken(stored.token || '')
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUserId(stored.userId || '')
       setStatus('Restored previous Jellyfin session.')
     } catch {
@@ -647,6 +655,7 @@ function App() {
 
   useEffect(() => {
     if (!token || !userId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasInitialShuffleLoaded(false)
     }
   }, [token, userId])
@@ -831,18 +840,24 @@ function App() {
           ? `Found ${items.length} matches for "${query}".`
           : `Loaded ${items.length} tracks from Jellyfin.`,
       )
-      setSelectedTrack((prev: JellyfinAudioItem | null) => {
-        if (!items.length) {
-          return null
-        }
+       setSelectedTrack((prev: JellyfinAudioItem | null) => {
+         if (!items.length) {
+           return null
+         }
 
-        if (!prev) {
-          return items[0]
-        }
+         // If we're currently playing, preserve the current track regardless of search results
+         if (isPlaying && prev) {
+           const stillVisible = items.find((item) => item.Id === prev.Id)
+           return stillVisible ?? prev
+         }
 
-        const stillVisible = items.find((item) => item.Id === prev.Id)
-        return stillVisible ?? items[0]
-      })
+         if (!prev) {
+           return items[0]
+         }
+
+         const stillVisible = items.find((item) => item.Id === prev.Id)
+         return stillVisible ?? items[0]
+       })
     } catch (error) {
       const message = (error as Error).message || ''
       const shouldRetryAuth =
@@ -908,6 +923,7 @@ function App() {
       return
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHasInitialShuffleLoaded(true)
     void handleShuffleView()
   }, [isAuthenticated, hasInitialShuffleLoaded])
@@ -1009,19 +1025,21 @@ function App() {
       return
     }
 
-    await engineRef.current.setupForElement(audio, {
-      lowPassFrequency,
-      lowPassQ,
-      lowPassEnabled: isLowPassEnabled,
-      lowPassClipGuardEnabled: isReduceClippingEnabled,
-      masterVolume,
-      phaserEnabled: isPhaserEnabled,
-      phaserMinFreq,
-      phaserMaxFreq,
-      phaserRate,
-      phaserDepth,
-      phaserFeedback,
-    })
+     await engineRef.current.setupForElement(audio, {
+       lowPassFrequency,
+       lowPassQ,
+       lowPassEnabled: isLowPassEnabled,
+       lowPassClipGuardEnabled: isReduceClippingEnabled,
+       masterVolume,
+       phaserEnabled: isPhaserEnabled,
+       phaserMinFreq,
+       phaserMaxFreq,
+       phaserRate,
+       phaserDepth,
+       phaserFeedback,
+       isTranscoded: isTranscodingEnabled,
+       isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+     })
 
 
     try {
@@ -1186,12 +1204,9 @@ function App() {
       return
     }
 
-    let clientX = 0
-    if ('touches' in event) {
-      clientX = event.touches[0].clientX
-    } else {
-      clientX = (event as ReactMouseEvent).clientX
-    }
+    const clientX = 'touches' in event
+      ? event.touches[0].clientX
+      : (event as ReactMouseEvent).clientX
 
     const offsetX = clientX - rect.left
     const peaks = scrubberPeaks.length ? scrubberPeaks : new Array(160).fill(0.18)
@@ -1276,20 +1291,48 @@ function App() {
     }
 
     const updateDuration = (): void => {
-      const metadataDuration = Number.isFinite(audio.duration) ? audio.duration : 0
-      const stableDuration = expectedDurationRef.current || metadataDuration
-      setDuration(stableDuration)
-    }
+       const metadataDuration = Number.isFinite(audio.duration) ? audio.duration : 0
+       const stableDuration = expectedDurationRef.current || metadataDuration
+       setDuration(stableDuration)
+     }
 
-    audio.addEventListener('timeupdate', updateCurrentTime)
-    audio.addEventListener('loadedmetadata', updateDuration)
-    audio.addEventListener('durationchange', updateDuration)
+    const handleEnded = async () => {
+       await handleTrackEnded()
+     }
 
-    return () => {
-      audio.removeEventListener('timeupdate', updateCurrentTime)
-      audio.removeEventListener('loadedmetadata', updateDuration)
-      audio.removeEventListener('durationchange', updateDuration)
-    }
+     audio.addEventListener('timeupdate', updateCurrentTime)
+     audio.addEventListener('loadedmetadata', updateDuration)
+     audio.addEventListener('durationchange', updateDuration)
+     audio.addEventListener('ended', handleEnded)
+
+     // iOS backup: Poll for track end since 'ended' event may not fire reliably on iOS
+     let lastTime = audio.currentTime
+     let stallCount = 0
+     const iOSPollingInterval = setInterval(() => {
+       if (audio.ended || (audio.currentTime >= audio.duration && audio.duration > 0)) {
+         clearInterval(iOSPollingInterval)
+         void handleTrackEnded()
+       }
+       // Detect stalling near end (iOS HLS issue)
+       if (Math.abs(audio.currentTime - lastTime) < 0.1 && audio.currentTime > 0 && audio.duration > 0 && audio.currentTime >= audio.duration - 0.5) {
+         stallCount++
+         if (stallCount > 5) {
+           clearInterval(iOSPollingInterval)
+           void handleTrackEnded()
+         }
+       } else {
+         stallCount = 0
+       }
+       lastTime = audio.currentTime
+     }, 500)
+
+     return () => {
+       audio.removeEventListener('timeupdate', updateCurrentTime)
+       audio.removeEventListener('loadedmetadata', updateDuration)
+       audio.removeEventListener('durationchange', updateDuration)
+       audio.removeEventListener('ended', handleEnded)
+       clearInterval(iOSPollingInterval)
+     }
   }, [])
 
   useEffect(() => {
@@ -1525,6 +1568,7 @@ function App() {
 
   useEffect(() => {
     if (!tracks.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRandomTargetId(null)
       return
     }

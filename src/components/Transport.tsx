@@ -9,6 +9,31 @@ interface TransportProps {
   disabled: boolean
 }
 
+const SeekIcon = ({ direction }: { direction: 'back' | 'forward' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.9"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`seek-icon ${direction} ${direction === 'back' ? 'backward' : 'forward'}`}
+    aria-hidden="true"
+  >
+    {direction === 'back' ? (
+      <>
+        <path d="M12 5a7 7 0 1 1-7 7" />
+        <path d="M9 2L4.5 5 9 8" />
+      </>
+    ) : (
+      <>
+        <path d="M12 5a7 7 0 1 0 7 7" />
+        <path d="M15 2l4.5 3-4.5 3" />
+      </>
+    )}
+  </svg>
+)
+
 export const Transport: React.FC<TransportProps> = ({
   isPlaying,
   onTogglePlay,
@@ -17,31 +42,6 @@ export const Transport: React.FC<TransportProps> = ({
   onPrev,
   disabled
 }) => {
-  const SeekIcon = ({ direction }: { direction: 'back' | 'forward' }) => (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.9"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={`seek-icon ${direction} ${direction === 'back' ? 'backward' : 'forward'}`}
-      aria-hidden="true"
-    >
-      {direction === 'back' ? (
-        <>
-          <path d="M12 5a7 7 0 1 1-7 7" />
-          <path d="M9 2L4.5 5 9 8" />
-        </>
-      ) : (
-        <>
-          <path d="M12 5a7 7 0 1 0 7 7" />
-          <path d="M15 2l4.5 3-4.5 3" />
-        </>
-      )}
-    </svg>
-  )
-
   return (
     <div className="transport-container">
       <button 

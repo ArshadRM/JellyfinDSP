@@ -31,6 +31,7 @@ export function Knob({
   useEffect(() => {
     if (!isFocused) {
       const displayValue = label.includes('%') ? Math.round(value * 100) : Number(value.toFixed(2))
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInputValue(displayValue.toString())
     }
   }, [value, isFocused, label])
@@ -98,7 +99,7 @@ export function Knob({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    let multiplier = e.shiftKey ? 10 : 1
+    const multiplier = e.shiftKey ? 10 : 1
     const stepSize = step || (max - min) / 100
     
     if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
@@ -183,7 +184,8 @@ export function Knob({
       document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
     }
-  }, [isDragging, min, max, value, onChange, step, horizontalSwipe])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDragging, min, max, value, onChange, step, horizontalSwipe, quantize, startPos, prevX, prevY, prevAngle, center, getCssAngle, ANGLE_RANGE])
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault()

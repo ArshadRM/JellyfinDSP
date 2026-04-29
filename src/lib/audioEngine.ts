@@ -10,6 +10,8 @@ type EngineOptions = {
   phaserRate: number
   phaserDepth: number
   phaserFeedback: number
+  isTranscoded: boolean
+  isIOS: boolean
 }
 
 const PHASER_WORKLET_CODE = `
@@ -250,6 +252,38 @@ export class AudioEngine {
   }
 
   async setupForElement(audioElement: HTMLAudioElement, options: EngineOptions): Promise<void> {
+    // For transcoded audio on iOS, bypass Web Audio processing due to compatibility issues
+    if (options.isTranscoded && options.isIOS) {
+      if (!this.context) {
+        this.context = new AudioContext()
+      }
+      
+      // Still need to load worklet for potential future use
+      if (!this.workletLoaded) {
+        const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
+        const url = URL.createObjectURL(blob)
+        await this.context.audioWorklet.addModule(url)
+        this.workletLoaded = true
+      }
+      
+      this.connectedElement = audioElement
+      this.disconnect() // Clean up any existing connections
+      
+      // Store references but don't connect them for iOS transcoded audio
+      this.sourceNode = this.context.createMediaElementSource(audioElement)
+      this.analyserNode = this.context.createAnalyser()
+
+      this.analyserNode.fftSize = 2048
+      this.analyserNode.smoothingTimeConstant = 0.76
+
+      // For iOS transcoded audio, connect analyser directly to destination for basic visualization
+      // but bypass all filters and effects
+      this.sourceNode.connect(this.analyserNode)
+      this.analyserNode.connect(this.context.destination)
+
+      return
+    }
+
     if (!this.context) {
       this.context = new AudioContext()
     }
@@ -270,8 +304,8 @@ export class AudioEngine {
       this.monoToStereoNode = this.context.createChannelMerger(2)
       this.lowPassMixNode = this.context.createGain()
       this.masterGainNode = this.context.createGain()
-      this.phaserNode = new AudioWorkletNode(this.context, 'phaser-worklet', {
-        outputChannelCount: [2]
+      this.phaserNode = new AudioWorkletNode(this.context, "phaser-worklet", {
+        outputChannelCount: [2],
       })
       this.analyserNode = this.context.createAnalyser()
 
@@ -289,12 +323,12 @@ export class AudioEngine {
         phaserFeedback: options.phaserFeedback
       })
       this.setPhaserEnabled(options.phaserEnabled)
-
+  
       this.analyserNode.fftSize = 2048
       this.analyserNode.smoothingTimeConstant = 0.76
-
+  
       this.rebuildLowPassNode()
-
+  
       this.sourceNode.connect(this.masterGainNode)
       this.sourceNode.connect(this.splitterNode)
       this.splitterNode.connect(this.monoSumNode, 0, 0)
@@ -304,7 +338,7 @@ export class AudioEngine {
       this.masterGainNode.connect(this.phaserNode)
       this.phaserNode.connect(this.analyserNode)
       this.analyserNode.connect(this.context.destination)
-
+  
       this.reconnectGraph()
     }
 
