@@ -6,6 +6,8 @@ import { Knob } from './components/Knob'
 import { RangeSlider } from './components/RangeSlider'
 import { Transport } from './components/Transport'
 import { FullscreenButton } from './components/FullscreenButton'
+import { Visualizer, VIZ_THEMES, DEFAULT_CHARSET } from './lib/visualizer'
+import type { VizMode, WaveformStyle } from './lib/visualizer'
 import {
   authenticate,
   authHeader,
@@ -183,7 +185,18 @@ function App() {
   const [totalSongsPlayed, setTotalSongsPlayed] = useState(initialStats.totalSongsPlayed)
   const [isPlaybackEcoMode, setIsPlaybackEcoMode] = useState(initialSettings.isPlaybackEcoMode ?? false)
   const [isFullscreenActive, setIsFullscreenActive] = useState(false)
-  
+  const [isPlaybarHidden, setIsPlaybarHidden] = useState(false)
+  const [vizMode, setVizMode] = useState<VizMode>(initialSettings.vizMode ?? 'waveform')
+  const [isVizExpanded, setIsVizExpanded] = useState(initialSettings.isVizExpanded ?? false)
+  const [waveformColor, setWaveformColor] = useState(initialSettings.waveformColor ?? 'rgba(215, 235, 255, 0.45)')
+  const [waveformLineWidth, setWaveformLineWidth] = useState(initialSettings.waveformLineWidth ?? 1.35)
+  const [waveformStyle, setWaveformStyle] = useState<WaveformStyle>(initialSettings.waveformStyle ?? 'line')
+  const [milkdropCharset, setMilkdropCharset] = useState(initialSettings.milkdropCharset ?? DEFAULT_CHARSET)
+  const [milkdropCellSize, setMilkdropCellSize] = useState(initialSettings.milkdropCellSize ?? 8)
+  const [milkdropUseAscii, setMilkdropUseAscii] = useState(initialSettings.milkdropUseAscii ?? true)
+  const [milkdropAutoRamp, setMilkdropAutoRamp] = useState(initialSettings.milkdropAutoRamp ?? true)
+  const [milkdropThemeId, setMilkdropThemeId] = useState(initialSettings.milkdropThemeId ?? 'white')
+
   const [queue, setQueue] = useState<JellyfinAudioItem[]>(() => {
     const savedQueue = localStorage.getItem('jellyfindsp.queue')
     const savedServer = localStorage.getItem('jellyfindsp.queueServerUrl')
@@ -214,6 +227,8 @@ function App() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const scrubberCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const backgroundWaveformRef = useRef<HTMLCanvasElement | null>(null)
+  const milkdropCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const vizRef = useRef<Visualizer | null>(null)
   const currentTimeRef = useRef(0)
   const durationRef = useRef(0)
   const expectedDurationRef = useRef(0)
@@ -1336,69 +1351,40 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const backgroundCanvas = backgroundWaveformRef.current
-    if (!backgroundCanvas) {
-      return
-    }
+    const displayCanvas = backgroundWaveformRef.current
+    const milkdropCanvas = milkdropCanvasRef.current
+    if (!displayCanvas || !milkdropCanvas) return
 
-    const backgroundCtx = backgroundCanvas.getContext('2d')
-    if (!backgroundCtx) {
-      return
-    }
+    const viz = new Visualizer({
+      engine: engineRef.current,
+      displayCanvas,
+      milkdropCanvas,
+    })
 
-    const waveformData = new Uint8Array(1024)
-    let rafId = 0
+    viz.start()
+    vizRef.current = viz
 
-    const syncCanvasSize = (canvas: HTMLCanvasElement): { width: number; height: number } => {
-      const width = canvas.clientWidth
-      const height = canvas.clientHeight
-
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width
-        canvas.height = height
-      }
-
-      return { width, height }
-    }
-
-    const draw = (): void => {
-      const size = syncCanvasSize(backgroundCanvas)
-      if (!size.width || !size.height) {
-        rafId = requestAnimationFrame(draw)
-        return
-      }
-
-      backgroundCtx.clearRect(0, 0, size.width, size.height)
-      const hasData = engineRef.current.getWaveformData(waveformData)
-
-      if (hasData) {
-        backgroundCtx.strokeStyle = 'rgba(215, 235, 255, 0.45)'
-        backgroundCtx.lineWidth = isFullscreenActive ? 1.75 : 1.35
-        backgroundCtx.beginPath()
-
-        for (let i = 0; i < waveformData.length; i += 1) {
-          const x = (i / (waveformData.length - 1)) * size.width
-          const y = (waveformData[i] / 255) * size.height
-
-          if (i === 0) {
-            backgroundCtx.moveTo(x, y)
-          } else {
-            backgroundCtx.lineTo(x, y)
-          }
-        }
-
-        backgroundCtx.stroke()
-      }
-
-      rafId = requestAnimationFrame(draw)
-    }
-
-    rafId = requestAnimationFrame(draw)
+    const onResize = () => viz.resize()
+    window.addEventListener('resize', onResize)
 
     return () => {
-      cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', onResize)
+      viz.dispose()
+      vizRef.current = null
     }
-  }, [isFullscreenActive])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => { vizRef.current?.setMode(vizMode) }, [vizMode])
+  useEffect(() => { vizRef.current?.setWaveformColor(waveformColor) }, [waveformColor])
+  useEffect(() => { vizRef.current?.setWaveformLineWidth(waveformLineWidth) }, [waveformLineWidth])
+  useEffect(() => { vizRef.current?.setWaveformStyle(waveformStyle) }, [waveformStyle])
+  useEffect(() => { vizRef.current?.setFullscreen(isFullscreenActive) }, [isFullscreenActive])
+  useEffect(() => { vizRef.current?.setCharset(milkdropCharset) }, [milkdropCharset])
+  useEffect(() => { vizRef.current?.setCellSize(milkdropCellSize) }, [milkdropCellSize])
+  useEffect(() => { vizRef.current?.setUseAscii(milkdropUseAscii) }, [milkdropUseAscii])
+  useEffect(() => { vizRef.current?.setAutoRamp(milkdropAutoRamp) }, [milkdropAutoRamp])
+  useEffect(() => { vizRef.current?.setTheme(milkdropThemeId) }, [milkdropThemeId])
 
   useEffect(() => {
     if (isFullscreenActive) {
@@ -1408,6 +1394,15 @@ function App() {
     }
     return () => document.body.classList.remove('is-fullscreen')
   }, [isFullscreenActive])
+
+  useEffect(() => {
+    if (vizMode === 'milkdrop') {
+      document.body.classList.add('viz-milkdrop')
+    } else {
+      document.body.classList.remove('viz-milkdrop')
+    }
+    return () => document.body.classList.remove('viz-milkdrop')
+  }, [vizMode])
 
   useEffect(() => {
     if (serverUrl) {
@@ -1445,6 +1440,16 @@ function App() {
       cachingMode,
       cacheLimitMb,
       isCacheLimitTextOnly,
+      vizMode,
+      isVizExpanded,
+      waveformColor,
+      waveformLineWidth,
+      waveformStyle,
+      milkdropCharset,
+      milkdropCellSize,
+      milkdropUseAscii,
+      milkdropAutoRamp,
+      milkdropThemeId,
     }
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
   }, [
@@ -1475,6 +1480,16 @@ function App() {
     cachingMode,
     cacheLimitMb,
     isCacheLimitTextOnly,
+    vizMode,
+    isVizExpanded,
+    waveformColor,
+    waveformLineWidth,
+    waveformStyle,
+    milkdropCharset,
+    milkdropCellSize,
+    milkdropUseAscii,
+    milkdropAutoRamp,
+    milkdropThemeId,
   ])
 
   useEffect(() => {
@@ -1866,6 +1881,10 @@ function App() {
       <canvas 
         ref={backgroundWaveformRef} 
         className={`global-background-waveform ${isFullscreenActive ? 'fullscreen-mode' : ''}`} 
+      />
+      <canvas 
+        ref={milkdropCanvasRef} 
+        className="milkdrop-canvas"
       />
       <main className={`shell ${isFullscreenActive ? 'fullscreen-hidden' : ''}`}>
         <section className="panel left-panel" ref={leftPanelRef}>
@@ -2455,6 +2474,168 @@ function App() {
               )}
             </AnimatePresence>
           </div>
+
+          <div className="control-card">
+            <div className={`menu-head ${isVizExpanded ? 'expanded' : ''}`}>
+              <h2 onClick={() => setIsVizExpanded((prev: boolean) => !prev)}>Visualization</h2>
+              <div className="menu-actions">
+                <button
+                  type="button"
+                  className="reset-btn"
+                  onClick={() => {
+                    setVizMode('waveform')
+                    setWaveformColor('rgba(215, 235, 255, 0.45)')
+                    setWaveformLineWidth(1.35)
+                    setWaveformStyle('line')
+                    setMilkdropCharset(DEFAULT_CHARSET)
+                    setMilkdropCellSize(8)
+                    setMilkdropUseAscii(true)
+                    setMilkdropAutoRamp(true)
+                    setMilkdropThemeId('white')
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {isVizExpanded && (
+                <motion.div
+                  className="menu-content"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <label>
+                    Mode
+                    <select
+                      value={vizMode}
+                      onChange={(event) => setVizMode(event.target.value as VizMode)}
+                    >
+                      <option value="waveform">Waveform</option>
+                      <option value="milkdrop">ASCII Milkdrop</option>
+                    </select>
+                  </label>
+
+                  {vizMode === 'waveform' && (
+                    <>
+                      <label>
+                        Color
+                        <select
+                          value={waveformColor}
+                          onChange={(event) => setWaveformColor(event.target.value)}
+                        >
+                          <option value="rgba(215, 235, 255, 0.45)">Light Blue</option>
+                          <option value="rgba(255, 159, 47, 0.8)">Orange</option>
+                          <option value="rgba(157, 255, 207, 0.6)">Green</option>
+                          <option value="rgba(128, 207, 255, 0.6)">Cyan</option>
+                          <option value="rgba(255, 255, 255, 0.5)">White</option>
+                          <option value="rgba(255, 100, 100, 0.6)">Red</option>
+                        </select>
+                      </label>
+                      <label>
+                        <div className="label-header">
+                          <span>Line Width</span>
+                          <input
+                            type="number"
+                            className="param-input"
+                            min="0.5"
+                            max="5"
+                            step="0.1"
+                            value={waveformLineWidth}
+                            onChange={(event) => setWaveformLineWidth(Math.max(0.5, Math.min(5, Number(event.target.value))))}
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={0.5}
+                          max={5}
+                          step={0.1}
+                          value={waveformLineWidth}
+                          onChange={(event) => setWaveformLineWidth(Number(event.target.value))}
+                        />
+                      </label>
+                      <label>
+                        Style
+                        <select
+                          value={waveformStyle}
+                          onChange={(event) => setWaveformStyle(event.target.value as WaveformStyle)}
+                        >
+                          <option value="line">Line</option>
+                          <option value="bars">Bars</option>
+                          <option value="mirror">Mirror</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
+
+                  {vizMode === 'milkdrop' && (
+                    <>
+                      <label>
+                        Color Theme
+                        <select
+                          value={milkdropThemeId}
+                          onChange={(event) => setMilkdropThemeId(event.target.value)}
+                        >
+                          {VIZ_THEMES.map((t) => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        ASCII Characters
+                        <input
+                          type="text"
+                          value={milkdropCharset}
+                          onChange={(event) => setMilkdropCharset(event.target.value || DEFAULT_CHARSET)}
+                        />
+                      </label>
+                      <label>
+                        <div className="label-header">
+                          <span>Cell Size</span>
+                          <input
+                            type="number"
+                            className="param-input"
+                          min="1"
+                          max="32"
+                            step="1"
+                            value={milkdropCellSize}
+                            onChange={(event) => setMilkdropCellSize(Math.max(1, Math.min(32, Number(event.target.value))))}
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={1}
+                          max={32}
+                          step={1}
+                          value={milkdropCellSize}
+                          onChange={(event) => setMilkdropCellSize(Number(event.target.value))}
+                        />
+                      </label>
+                      <label className="inline-switch">
+                        <input
+                          type="checkbox"
+                          checked={milkdropUseAscii}
+                          onChange={(event) => setMilkdropUseAscii(event.target.checked)}
+                        />
+                        Use ASCII Characters
+                      </label>
+                      <label className="inline-switch">
+                        <input
+                          type="checkbox"
+                          checked={milkdropAutoRamp}
+                          onChange={(event) => setMilkdropAutoRamp(event.target.checked)}
+                        />
+                        Auto Resolution Ramp
+                      </label>
+                    </>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </section>
 
         <section className="panel right-panel" ref={rightPanelRef}>
@@ -2553,7 +2734,20 @@ function App() {
         </section>
       </main>
 
-      <aside className="bottom-player-bar">
+      <div 
+        className="playbar-hide-tab"
+        onClick={() => setIsPlaybarHidden(true)}
+        title="Hide playbar"
+      />
+
+      {isPlaybarHidden && (
+        <div 
+          className="playbar-reveal-zone"
+          onClick={() => setIsPlaybarHidden(false)}
+        />
+      )}
+
+      <aside className={`bottom-player-bar ${isPlaybarHidden ? 'playbar-hidden' : ''} ${!isPlaybarHidden ? 'playbar-visible' : ''}`}>
         <div className="player-bar-content">
           <div className="player-left">
             {selectedTrack && (

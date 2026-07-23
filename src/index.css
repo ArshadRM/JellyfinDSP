@@ -59,6 +59,23 @@ body.is-fullscreen {
     linear-gradient(145deg, #05060a, #0a121d 62%, #0d1a24);
 }
 
+body.is-fullscreen .bottom-player-bar {
+  opacity: 0.1;
+  transition: opacity 0.4s ease;
+}
+
+body.is-fullscreen .bottom-player-bar:hover {
+  opacity: 1;
+}
+
+body.viz-milkdrop {
+  background: #000 !important;
+}
+
+body.viz-milkdrop.is-fullscreen {
+  background: #000 !important;
+}
+
 .shell {
   width: min(1180px, 100% - 2rem);
   margin: 0 auto calc(var(--player-bar-height) + var(--shell-pad)) auto;
@@ -94,6 +111,26 @@ body.is-fullscreen {
 
 .global-background-waveform.fullscreen-mode {
   opacity: 0.95;
+}
+
+.milkdrop-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  opacity: 1;
+  pointer-events: none;
+  display: none;
+}
+
+body.viz-milkdrop .milkdrop-canvas {
+  display: block;
+  z-index: 0;
+}
+
+body.viz-milkdrop .global-background-waveform {
+  display: none;
 }
 
 .panel {
@@ -976,12 +1013,57 @@ button:disabled {
   right: 0;
   width: 100%;
   height: var(--player-bar-height);
-  background: #0a0c14; /* Solid, deep dark */
+  background: #0a0c14;
   border-top: 1px solid var(--panel-border);
   z-index: 1000;
   display: flex;
   align-items: center;
   box-shadow: 0 -8px 30px rgba(0,0,0,0.6);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bottom-player-bar.playbar-hidden {
+  transform: translateY(calc(100% - 4px));
+}
+
+.bottom-player-bar.playbar-hidden:hover {
+  transform: translateY(calc(100% - 24px));
+}
+
+.playbar-hide-tab {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 48px;
+  height: 6px;
+  background: rgba(255, 159, 47, 0.5);
+  border-radius: 3px 3px 0 0;
+  cursor: pointer;
+  z-index: 1001;
+  opacity: 0;
+  transition: opacity 0.25s ease, height 0.25s ease;
+  pointer-events: none;
+}
+
+.playbar-visible .playbar-hide-tab {
+  pointer-events: auto;
+  opacity: 0.6;
+}
+
+.playbar-hide-tab:hover {
+  opacity: 1;
+  height: 10px;
+}
+
+.playbar-reveal-zone {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 20vh;
+  z-index: 999;
+  pointer-events: auto;
 }
 
 .player-bar-content {

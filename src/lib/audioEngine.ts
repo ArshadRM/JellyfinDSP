@@ -414,6 +414,23 @@ export class AudioEngine {
     return true
   }
 
+  getFrequencyData(target: Uint8Array<ArrayBuffer>): boolean {
+    if (!this.analyserNode) {
+      return false
+    }
+
+    this.analyserNode.getByteFrequencyData(target)
+    return true
+  }
+
+  getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode
+  }
+
+  getAudioContext(): AudioContext | null {
+    return this.context
+  }
+
   async resume(): Promise<void> {
     if (!this.context) {
       return
