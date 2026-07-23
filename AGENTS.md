@@ -104,6 +104,10 @@ Butterchurn's `connectAudio()` creates 5 internal Web Audio nodes (gain, splitte
 
 The `dist/` directory is sometimes owned by root (from Docker builds). This causes `npm run build` to fail with EACCES. Fix with `sudo rm -rf dist/` before rebuilding locally.
 
+### Docker layer cache with new dependencies
+
+When adding new npm dependencies, Docker's layer cache may reuse a stale `npm install` layer that predates the dependency. This causes `vite build` to fail with "Rolldown failed to resolve import". Fix with `docker compose build --no-cache`. If the container is already running, either recreate it (`docker compose up --build --force-recreate`) or exec `npm install` inside the running container.
+
 ### App.tsx is monolithic
 
 Nearly all app state and logic lives in `App.tsx` (~2800 lines). This is intentional for now — the team prefers keeping everything in one place for a music player with tightly coupled state. If you split files, be careful about the circular dependency between state setters and effects.

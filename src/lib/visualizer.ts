@@ -339,26 +339,23 @@ export class Visualizer {
     this.butterchurnInitializing = true
 
     try {
-      const [bcMod, presetsMod] = await Promise.all([
-        import('butterchurn') as Promise<Record<string, unknown>>,
-        import('butterchurn-presets') as Promise<Record<string, unknown>>,
-      ])
-
-      // CJS interop: the default export may be the module itself, or a webpack
-      // wrapper whose `.default` is the actual API. Try multiple paths.
       type AnyRecord = Record<string, unknown>
-      const bcRaw = (bcMod.default ?? bcMod) as AnyRecord
-      const bc = (bcRaw.default ?? bcRaw) as AnyRecord
-      const createVisualizerFn = (bc.createVisualizer ?? bcRaw.createVisualizer) as
+      const bc = (window as unknown as AnyRecord)['butterchurn'] as AnyRecord | undefined
+      if (!bc) {
+        throw new Error('butterchurn global not found — ensure the CDN script is loaded')
+      }
+      const createVisualizerFn = (bc.createVisualizer) as
         | ((ctx: AudioContext, canvas: HTMLCanvasElement, opts: Record<string, number>) => import('butterchurn').Visualizer)
         | undefined
       if (!createVisualizerFn) {
         throw new Error('Could not locate butterchurn.createVisualizer')
       }
 
-      const prRaw = (presetsMod.default ?? presetsMod) as AnyRecord
-      const pr = (prRaw.default ?? prRaw) as AnyRecord
-      const getPresetsFn = (pr.getPresets ?? prRaw.getPresets) as
+      const pr = (window as unknown as AnyRecord)['butterchurnPresets'] as AnyRecord | undefined
+      if (!pr) {
+        throw new Error('butterchurnPresets global not found — ensure the CDN script is loaded')
+      }
+      const getPresetsFn = (pr.getPresets) as
         | (() => Record<string, unknown>)
         | undefined
       if (!getPresetsFn) {
