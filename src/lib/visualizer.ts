@@ -191,7 +191,7 @@ export class Visualizer {
   private paletteTex: WebGLTexture | null = null
   private prog: WebGLProgram | null = null
   private charset = DEFAULT_CHARSET
-  private cellSize = 8
+  private cellSize = 6
   private useAscii = 1.0
   private theme: VisualTheme | null = null
   private presets: Record<string, unknown> = {}
@@ -205,8 +205,8 @@ export class Visualizer {
   private lastFpsTime = 0
 
   private lastRampTime = 0
-  private baseCell = 8
-  private targetCell = 8
+  private baseCell = 6
+  private targetCell = 6
 
   private butterchurnTimeData: Uint8Array<ArrayBuffer> | null = null
   private butterchurnTimeDataL: Uint8Array<ArrayBuffer> | null = null
@@ -340,22 +340,24 @@ export class Visualizer {
 
     try {
       type AnyRecord = Record<string, unknown>
-      const bc = (window as unknown as AnyRecord)['butterchurn'] as AnyRecord | undefined
-      if (!bc) {
+      const bcRaw = (window as unknown as AnyRecord)['butterchurn'] as AnyRecord | undefined
+      if (!bcRaw) {
         throw new Error('butterchurn global not found — ensure the CDN script is loaded')
       }
-      const createVisualizerFn = (bc.createVisualizer) as
+      const bc = (bcRaw.default ?? bcRaw) as AnyRecord
+      const createVisualizerFn = (bc.createVisualizer ?? bcRaw.createVisualizer) as
         | ((ctx: AudioContext, canvas: HTMLCanvasElement, opts: Record<string, number>) => import('butterchurn').Visualizer)
         | undefined
       if (!createVisualizerFn) {
         throw new Error('Could not locate butterchurn.createVisualizer')
       }
 
-      const pr = (window as unknown as AnyRecord)['butterchurnPresets'] as AnyRecord | undefined
-      if (!pr) {
+      const prRaw = (window as unknown as AnyRecord)['butterchurnPresets'] as AnyRecord | undefined
+      if (!prRaw) {
         throw new Error('butterchurnPresets global not found — ensure the CDN script is loaded')
       }
-      const getPresetsFn = (pr.getPresets) as
+      const pr = (prRaw.default ?? prRaw) as AnyRecord
+      const getPresetsFn = (pr.getPresets ?? prRaw.getPresets) as
         | (() => Record<string, unknown>)
         | undefined
       if (!getPresetsFn) {
