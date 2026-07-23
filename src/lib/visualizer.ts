@@ -208,6 +208,13 @@ export class Visualizer {
   private baseCell = 8
   private targetCell = 8
 
+  private butterchurnTimeData: Uint8Array<ArrayBuffer> | null = null
+  private butterchurnTimeDataL: Uint8Array<ArrayBuffer> | null = null
+  private butterchurnTimeDataR: Uint8Array<ArrayBuffer> | null = null
+  private uniformCache = new Map<string, WebGLUniformLocation | null>()
+  private lastPaletteThemeId: string | null = null
+  private cachedPaletteData: Uint8Array | null = null
+
   constructor(config: VisualizerConfig) {
     this.engine = config.engine
     this.displayCanvas = config.displayCanvas
@@ -276,8 +283,8 @@ export class Visualizer {
   resize(): void {
     this.resizeCanvases()
     if (this.butterchurnViz && this.offscreenCanvas) {
-      const w = window.innerWidth
-      const h = window.innerHeight
+      const w = Math.floor(window.innerWidth / 2)
+      const h = Math.floor(window.innerHeight / 2)
       this.offscreenCanvas.width = w
       this.offscreenCanvas.height = h
       try {
@@ -301,6 +308,12 @@ export class Visualizer {
     this.paletteTex = null
     this.prog = null
     this.presets = {}
+    this.butterchurnTimeData = null
+    this.butterchurnTimeDataL = null
+    this.butterchurnTimeDataR = null
+    this.uniformCache.clear()
+    this.lastPaletteThemeId = null
+    this.cachedPaletteData = null
   }
 
   private resizeCanvases(): void {
@@ -352,17 +365,22 @@ export class Visualizer {
         throw new Error('Could not locate butterchurn-presets.getPresets')
       }
 
+      const halfW = Math.floor(window.innerWidth / 2)
+      const halfH = Math.floor(window.innerHeight / 2)
+
       this.offscreenCanvas = document.createElement('canvas')
-      this.offscreenCanvas.width = window.innerWidth
-      this.offscreenCanvas.height = window.innerHeight
+      this.offscreenCanvas.width = halfW
+      this.offscreenCanvas.height = halfH
 
       this.butterchurnViz = createVisualizerFn(ctx, this.offscreenCanvas, {
-        width: this.offscreenCanvas.width,
-        height: this.offscreenCanvas.height,
+        width: halfW,
+        height: halfH,
         pixelRatio: 1,
       })
 
-      this.butterchurnViz!.connectAudio(ana)
+      this.butterchurnTimeData = new Uint8Array(1024)
+      this.butterchurnTimeDataL = new Uint8Array(1024)
+      this.butterchurnTimeDataR = new Uint8Array(1024)
 
       this.presets = getPresetsFn()
       this.presetNames = Object.keys(this.presets).filter(name => !BLACKLIST.has(name))
@@ -422,6 +440,8 @@ export class Visualizer {
     const gl = this.gl!
     if (!gl) return
 
+    this.uniformCache.clear()
+
     const compileShader = (type: number, source: string): WebGLShader => {
       const shader = gl.createShader(type)!
       gl.shaderSource(shader, source)
@@ -459,8 +479,12 @@ export class Visualizer {
   }
 
   private U(name: string): WebGLUniformLocation | null {
+    const cached = this.uniformCache.get(name)
+    if (cached !== undefined) return cached
     if (!this.prog || !this.gl) return null
-    return this.gl.getUniformLocation(this.prog, name)
+    const loc = this.gl.getUniformLocation(this.prog, name)
+    this.uniformCache.set(name, loc)
+    return loc
   }
 
   private renderLoop(t: number): void {
@@ -551,15 +575,26 @@ export class Visualizer {
 
   private renderMilkdrop(t: number): void {
     if (!this.butterchurnViz || !this.gl || !this.offscreenCanvas || !this.font || !this.prog) return
+    if (!this.butterchurnTimeData || !this.butterchurnTimeDataL || !this.butterchurnTimeDataR) return
 
-    this.butterchurnViz.render()
+    this.engine.getWaveformData(this.butterchurnTimeData)
+    this.engine.getWaveformData(this.butterchurnTimeDataL)
+    this.engine.getWaveformData(this.butterchurnTimeDataR)
+
+    this.butterchurnViz.render({
+      audioLevels: {
+        timeByteArray: this.butterchurnTimeData,
+        timeByteArrayL: this.butterchurnTimeDataL,
+        timeByteArrayR: this.butterchurnTimeDataR,
+      },
+    })
 
     const gl = this.gl
     gl.viewport(0, 0, this.milkdropCanvas.width, this.milkdropCanvas.height)
 
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.sceneTex)
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.offscreenCanvas)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.offscreenCanvas)
 
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.font.tex)
@@ -580,16 +615,19 @@ export class Visualizer {
       if (this.theme.palette.length > 0) {
         const pSize = this.theme.palette.length
         gl.uniform1f(this.U('uPaletteSize')!, pSize)
-        const paletteData = new Uint8Array(pSize * 4)
-        this.theme.palette.forEach((col, i) => {
-          paletteData[i * 4 + 0] = col[0] * 255
-          paletteData[i * 4 + 1] = col[1] * 255
-          paletteData[i * 4 + 2] = col[2] * 255
-          paletteData[i * 4 + 3] = 255
-        })
+        if (this.lastPaletteThemeId !== this.theme.id) {
+          this.lastPaletteThemeId = this.theme.id
+          this.cachedPaletteData = new Uint8Array(pSize * 4)
+          this.theme.palette.forEach((col, i) => {
+            this.cachedPaletteData![i * 4 + 0] = col[0] * 255
+            this.cachedPaletteData![i * 4 + 1] = col[1] * 255
+            this.cachedPaletteData![i * 4 + 2] = col[2] * 255
+            this.cachedPaletteData![i * 4 + 3] = 255
+          })
+        }
         gl.activeTexture(gl.TEXTURE2)
         gl.bindTexture(gl.TEXTURE_2D, this.paletteTex)
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, pSize, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, paletteData)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, pSize, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.cachedPaletteData)
       }
     }
 

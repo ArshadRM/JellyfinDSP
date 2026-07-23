@@ -36,8 +36,6 @@ src/
 
   types/
     butterchurn.d.ts        Type declarations for butterchurn/butterchurn-presets (UMD packages lack ESM types)
-
-radio/                      Reference app (will be deleted in final release). DO NOT import from here.
 ```
 
 ## Key architectural decisions
@@ -56,9 +54,11 @@ The engine builds a Web Audio graph: `HTMLAudioElement → MediaElementSource �
 A single `Visualizer` class manages both waveform and milkdrop rendering via one `requestAnimationFrame` loop.
 
 - **Waveform mode**: draws to a 2D `<canvas>` (line, bars, or mirror style).
-- **Milkdrop mode**: butterchurn renders to an offscreen canvas, then a custom WebGL shader converts to ASCII characters (or raw pixels) with palette coloring. Uses a font texture atlas and cell-based downsampling.
+- **Milkdrop mode**: butterchurn renders to an offscreen canvas at **half viewport resolution**, then a custom WebGL shader converts to ASCII characters (or raw pixels) with palette coloring. Uses a font texture atlas and cell-based downsampling.
 - Butterchurn is lazy-loaded via `import('butterchurn')` only when milkdrop mode is first selected.
-- The `AudioEngine` must be initialized (have a context and analyser) before milkdrop can start.
+- **Audio feeding**: does NOT use butterchurn's `connectAudio()` (which creates 5 extra Web Audio nodes and causes main-thread↔audio-thread sync contention). Instead, we read from the AudioEngine's single analyser via `getWaveformData()` and pass the data to `butterchurn.render({ audioLevels })` manually each frame.
+- The offscreen canvas renders at half resolution (`innerWidth/2 × innerHeight/2`). The scene texture is uploaded via `texImage2D` (not `texSubImage2D`) so it resizes to match the smaller source, and the shader's UV coordinates stretch it to fill the viewport.
+- WebGL uniform locations are cached in a `Map` (cleared on program rebuild). Palette texture data is cached per theme ID.
 - Auto-cycles presets every 60s. Auto-blacklists presets that run below 15 FPS for 3+ seconds.
 - The render loop skips work when `document.hidden` is true.
 
@@ -95,6 +95,10 @@ The current code in `visualizer.ts` handles both via `bcMod.default?.default ?? 
 ### AudioEngine must be ready before butterchurn
 
 `ensureMilkdropReady()` requires both `getAudioContext()` and `getAnalyserNode()` to return non-null. These are only available after `AudioEngine.setupForElement()` has been called (which happens when a track is first selected). If you call `ensureMilkdropReady()` too early (before any track has played), it silently returns without initializing.
+
+### Butterchurn does NOT use connectAudio
+
+Butterchurn's `connectAudio()` creates 5 internal Web Audio nodes (gain, splitter, 3 analysers) that fight for audio-thread time with the main render thread. We avoid this entirely by reading from the AudioEngine's single analyser via `getWaveformData()` and passing 1024-sample `Uint8Array`s to `butterchurn.render({ audioLevels: { timeByteArray, timeByteArrayL, timeByteArrayR } })`. Both L and R receive the same mono downmix data — acceptable for visualization.
 
 ### `dist/` directory permissions
 

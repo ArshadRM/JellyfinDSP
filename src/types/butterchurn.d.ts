@@ -5,10 +5,22 @@ declare module 'butterchurn' {
     pixelRatio: number
   }
 
+  export interface AudioLevels {
+    timeByteArray: Uint8Array
+    timeByteArrayL: Uint8Array
+    timeByteArrayR: Uint8Array
+  }
+
+  export interface RenderOpts {
+    audioLevels?: AudioLevels
+    elapsedTime?: number
+  }
+
   export interface Visualizer {
     connectAudio(node: AudioNode): void
+    disconnectAudio(node: AudioNode): void
     loadPreset(preset: unknown, blend: number): void
-    render(opts?: unknown): void
+    render(opts?: RenderOpts): void
     setRendererSize(width: number, height: number): void
   }
 
