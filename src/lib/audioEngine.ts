@@ -170,6 +170,7 @@ export class AudioEngine {
   private lowPassFrequency = 55
   private lowPassQ = 0.54
   private workletLoaded = false
+  private workletFailed = false
 
   private clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value))
@@ -212,6 +213,57 @@ export class AudioEngine {
       // Web Audio expects subtraction on feedback terms, so invert the script's +a1/+a2 terms.
       feedforward: [b0, b1, b2],
       feedback: [1, -a1, -a2],
+    }
+  }
+
+  /**
+   * AudioWorklet only exists in a secure context (https or localhost). Plain http
+   * over a LAN address has no `audioWorklet` at all, and reading `.addModule` off
+   * undefined throws before the graph is built, leaving playback silent and the
+   * visualizers with no analyser.
+   */
+  private async ensureWorklet(): Promise<boolean> {
+    if (this.workletLoaded) {
+      return true
+    }
+
+    if (this.workletFailed || !this.context) {
+      return false
+    }
+
+    if (typeof this.context.audioWorklet?.addModule !== 'function') {
+      this.workletFailed = true
+      console.warn('AudioWorklet is unavailable (needs https or localhost); continuing without the phaser.')
+      return false
+    }
+
+    try {
+      const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
+      const url = URL.createObjectURL(blob)
+      await this.context.audioWorklet.addModule(url)
+      URL.revokeObjectURL(url)
+      this.workletLoaded = true
+      return true
+    } catch (error) {
+      this.workletFailed = true
+      console.warn('Could not load the phaser worklet; continuing without it.', error)
+      return false
+    }
+  }
+
+  private createPhaserNode(): AudioWorkletNode | null {
+    if (!this.context || !this.workletLoaded) {
+      return null
+    }
+
+    try {
+      return new AudioWorkletNode(this.context, 'phaser-worklet', {
+        outputChannelCount: [2],
+      })
+    } catch (error) {
+      this.workletFailed = true
+      console.warn('Could not create the phaser node; continuing without it.', error)
+      return null
     }
   }
 
@@ -258,14 +310,10 @@ export class AudioEngine {
         this.context = new AudioContext()
       }
       
-      // Still need to load worklet for potential future use
-      if (!this.workletLoaded) {
-        const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
-        const url = URL.createObjectURL(blob)
-        await this.context.audioWorklet.addModule(url)
-        this.workletLoaded = true
-      }
-      
+      // Loading the worklet is optional: when it fails the graph still has to be
+      // built, otherwise playback is silent and the visualizers have no analyser.
+      await this.ensureWorklet()
+
       this.connectedElement = audioElement
       this.disconnect() // Clean up any existing connections
       
@@ -288,12 +336,7 @@ export class AudioEngine {
       this.context = new AudioContext()
     }
 
-    if (!this.workletLoaded) {
-      const blob = new Blob([PHASER_WORKLET_CODE], { type: 'application/javascript' })
-      const url = URL.createObjectURL(blob)
-      await this.context.audioWorklet.addModule(url)
-      this.workletLoaded = true
-    }
+    await this.ensureWorklet()
 
     if (this.connectedElement !== audioElement) {
       this.disconnect()
@@ -304,9 +347,7 @@ export class AudioEngine {
       this.monoToStereoNode = this.context.createChannelMerger(2)
       this.lowPassMixNode = this.context.createGain()
       this.masterGainNode = this.context.createGain()
-      this.phaserNode = new AudioWorkletNode(this.context, "phaser-worklet", {
-        outputChannelCount: [2],
-      })
+      this.phaserNode = this.createPhaserNode()
       this.analyserNode = this.context.createAnalyser()
 
       this.lowPassFrequency = options.lowPassFrequency
@@ -335,8 +376,10 @@ export class AudioEngine {
       this.splitterNode.connect(this.monoSumNode, 1, 0)
       this.monoToStereoNode.connect(this.lowPassMixNode)
       this.lowPassMixNode.connect(this.masterGainNode)
-      this.masterGainNode.connect(this.phaserNode)
-      this.phaserNode.connect(this.analyserNode)
+      this.masterGainNode.connect(this.phaserNode ?? this.analyserNode)
+      if (this.phaserNode) {
+        this.phaserNode.connect(this.analyserNode)
+      }
       this.analyserNode.connect(this.context.destination)
   
       this.reconnectGraph()

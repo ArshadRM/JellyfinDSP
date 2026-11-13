@@ -100,6 +100,20 @@ The current code in `visualizer.ts` handles both via `bcMod.default?.default ?? 
 
 Butterchurn's `connectAudio()` creates 5 internal Web Audio nodes (gain, splitter, 3 analysers) that fight for audio-thread time with the main render thread. We avoid this entirely by reading from the AudioEngine's single analyser via `getWaveformData()` and passing 1024-sample `Uint8Array`s to `butterchurn.render({ audioLevels: { timeByteArray, timeByteArrayL, timeByteArrayR } })`. Both L and R receive the same mono downmix data — acceptable for visualization.
 
+### AudioWorklet needs a secure context
+
+`AudioContext.audioWorklet` is `undefined` outside a secure context. On the docker setup that means
+`http://<lan-ip>:26515` (or any plain-http host other than localhost) has no `audioWorklet` at all, and
+reading `this.context.audioWorklet.addModule` throws a `TypeError` from inside `setupForElement()`.
+That rejection used to abort the whole call before the graph was built, so audio was silent *and* the
+visualizers had no `AnalyserNode` to read — the classic "playback works but the viz is dead" symptom.
+
+`AudioEngine.ensureWorklet()` therefore checks for `audioWorklet.addModule` first and treats the
+worklet as optional; `createPhaserNode()` returns `null` when it is unavailable and
+`setupForElement()` wires `masterGain -> analyser` directly in that case. The phaser is the only
+feature that needs the worklet, so it degrades to a no-op instead of breaking the graph. Always test
+audio changes over both `http://localhost:...` and `http://<lan-ip>:...`.
+
 ### `dist/` directory permissions
 
 The `dist/` directory is sometimes owned by root (from Docker builds). This causes `npm run build` to fail with EACCES. Fix with `sudo rm -rf dist/` before rebuilding locally.

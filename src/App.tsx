@@ -1183,21 +1183,31 @@ function App() {
       return
     }
 
-     await engineRef.current.setupForElement(audio, {
-       lowPassFrequency,
-       lowPassQ,
-       lowPassEnabled: isLowPassEnabled,
-       lowPassClipGuardEnabled: isReduceClippingEnabled,
-       masterVolume,
-       phaserEnabled: isPhaserEnabled,
-       phaserMinFreq,
-       phaserMaxFreq,
-       phaserRate,
-       phaserDepth,
-       phaserFeedback,
-       isTranscoded: isTranscodingEnabled,
-       isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-     })
+    try {
+      await engineRef.current.setupForElement(audio, {
+        lowPassFrequency,
+        lowPassQ,
+        lowPassEnabled: isLowPassEnabled,
+        lowPassClipGuardEnabled: isReduceClippingEnabled,
+        masterVolume,
+        phaserEnabled: isPhaserEnabled,
+        phaserMinFreq,
+        phaserMaxFreq,
+        phaserRate,
+        phaserDepth,
+        phaserFeedback,
+        isTranscoded: isTranscodingEnabled,
+        isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+      })
+    } catch (error) {
+      // Without the graph there is no analyser and no output, so surface the
+      // failure instead of leaving it as an unhandled rejection.
+      const reason =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Unknown audio setup failure'
+      setStatus(withPersistentErrorHint(`Audio setup failed: ${reason}`))
+    }
 
 
     try {
