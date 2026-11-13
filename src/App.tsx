@@ -10,11 +10,19 @@ import { Visualizer, VIZ_THEMES, DEFAULT_CHARSET } from './lib/visualizer'
 import type { VizMode, WaveformStyle } from './lib/visualizer'
 import {
   authenticate,
+  authenticateWithQuickConnect,
   authHeader,
   buildImageUrl,
+  buildQuickConnectUrl,
   buildStreamUrl,
   buildWebUrl,
   fetchAudioLibrary,
+  fetchCurrentUser,
+  getQuickConnectState,
+  initiateQuickConnect,
+  isQuickConnectEnabled,
+  JellyfinApiError,
+  logoutSession,
   msFromTicks,
 } from './lib/jellyfin'
 import type { JellyfinAudioItem } from './lib/jellyfin'
@@ -130,14 +138,37 @@ function withPersistentErrorHint(message: string): string {
   return `${message}${PERSISTENT_ERROR_HINT}`
 }
 
+function readStoredSession(): Session | null {
+  const raw = localStorage.getItem(STORAGE_KEY)
+
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return JSON.parse(raw) as Session
+  } catch {
+    localStorage.removeItem(STORAGE_KEY)
+    return null
+  }
+}
+
 function App() {
   const initialStats = loadPersistedStats()
-  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL)
-  const [username, setUsername] = useState('Guest')
+  const [storedSession] = useState(readStoredSession)
+  const [serverUrl, setServerUrl] = useState(storedSession?.serverUrl || DEFAULT_SERVER_URL)
+  const [username, setUsername] = useState(storedSession?.username || 'Guest')
   const [password, setPassword] = useState('')
-  const [token, setToken] = useState('')
-  const [userId, setUserId] = useState('')
-  const [status, setStatus] = useState('Sign in to Jellyfin to load your music library.')
+  const [token, setToken] = useState(storedSession?.token || '')
+  const [userId, setUserId] = useState(storedSession?.userId || '')
+  const [status, setStatus] = useState(
+    storedSession?.token
+      ? 'Verifying your saved Jellyfin session...'
+      : 'Sign in to Jellyfin to load your music library.',
+  )
+  const [quickConnectCode, setQuickConnectCode] = useState('')
+  const [quickConnectAvailable, setQuickConnectAvailable] = useState(false)
+  const [isQuickConnectWaiting, setIsQuickConnectWaiting] = useState(false)
   const [search, setSearch] = useState('')
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [tracks, setTracks] = useState<JellyfinAudioItem[]>([])
@@ -249,6 +280,8 @@ function App() {
   const engineRef = useRef(new AudioEngine())
   const playbackRequestIdRef = useRef(0)
   const lastSearchIdRef = useRef(0)
+  const quickConnectTimerRef = useRef(0)
+  const quickConnectGenRef = useRef(0)
   const draggedItemRef = useRef<number | null>(null)
   const previousCachingModeRef = useRef<CacheMode>(cachingMode)
 
@@ -344,8 +377,7 @@ function App() {
     const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions, sid)
     const response = await fetch(streamUrl, {
       headers: {
-        'X-Emby-Token': token,
-        'X-Emby-Authorization': authHeader(token),
+        Authorization: authHeader(token),
       },
     })
 
@@ -541,8 +573,7 @@ function App() {
         const streamUrl = buildStreamUrl(serverUrl, trackId, token, userId, transcodingOptions, sid)
         const response = await fetch(streamUrl, {
           headers: {
-            'X-Emby-Token': token,
-            'X-Emby-Authorization': authHeader(token),
+            Authorization: authHeader(token),
           }
         })
         if (!response.ok) {
@@ -637,26 +668,47 @@ function App() {
   const isAuthenticated = token.length > 0 && userId.length > 0
 
   useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const storedToken = storedSession?.token || ''
+    const storedServerUrl = storedSession?.serverUrl || DEFAULT_SERVER_URL
 
-    if (!raw) {
+    if (!storedToken) {
       return
     }
 
-    try {
-      const stored = JSON.parse(raw) as Session
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setServerUrl(stored.serverUrl || DEFAULT_SERVER_URL)
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setUsername(stored.username || '')
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setToken(stored.token || '')
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setUserId(stored.userId || '')
-      setStatus('Restored previous Jellyfin session.')
-    } catch {
-      localStorage.removeItem(STORAGE_KEY)
+    let cancelled = false
+
+    // Access tokens can be revoked server side, so verify before trusting storage.
+    void fetchCurrentUser(storedServerUrl, storedToken)
+      .then((user) => {
+        if (cancelled) {
+          return
+        }
+
+        setUserId(user.Id)
+        setUsername(user.Name)
+        setStatus(`Signed in as ${user.Name}.`)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return
+        }
+
+        if (error instanceof JellyfinApiError && error.isUnauthorized) {
+          localStorage.removeItem(STORAGE_KEY)
+          setToken('')
+          setUserId('')
+          setStatus('The saved Jellyfin token was rejected by the server. Sign in again.')
+          return
+        }
+
+        setStatus(withPersistentErrorHint('Could not reach Jellyfin to verify the saved session.'))
+      })
+
+    return () => {
+      cancelled = true
     }
+    // Runs once: the saved session is already used to seed the state above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -674,20 +726,6 @@ function App() {
       setHasInitialShuffleLoaded(false)
     }
   }, [token, userId])
-
-  useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw || token) {
-      return
-    }
-
-    const timer = window.setTimeout(() => {
-      const fakeEvent = { preventDefault: () => { } } as React.FormEvent<HTMLFormElement>
-      void handleLogin(fakeEvent)
-    }, 800)
-
-    return () => window.clearTimeout(timer)
-  }, [])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -874,46 +912,22 @@ function App() {
          return stillVisible ?? items[0]
        })
     } catch (error) {
-      const message = (error as Error).message || ''
-      const shouldRetryAuth =
-        query.trim().length > 0 &&
-        message.includes('404') &&
-        username.trim().length > 0 &&
-        password.trim().length > 0 &&
-        !authOverride
-
-      if (shouldRetryAuth) {
-        const maxAttempts = 3
-        let lastRetryError: Error | null = null
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-          try {
-            setStatus(`Search endpoint returned 404. Re-authenticating (attempt ${attempt}/${maxAttempts})...`)
-            const refreshed = await authenticate(serverUrl, username, password)
-            setToken(refreshed.AccessToken)
-            setUserId(refreshed.User.Id)
-            await loadTracks(query, {
-              token: refreshed.AccessToken,
-              userId: refreshed.User.Id,
-            }, fetchOptions)
-            return
-          } catch (retryError) {
-            lastRetryError = retryError as Error
-            if (attempt < maxAttempts) {
-              await new Promise<void>((resolve) => {
-                window.setTimeout(resolve, 2000)
-              })
-            }
-          }
-        }
-
-        setStatus(withPersistentErrorHint(`Re-auth failed after 3 attempts: ${lastRetryError?.message ?? 'Unknown error'}`))
+      if (currentSearchId !== lastSearchIdRef.current) {
         return
       }
 
-      if (currentSearchId === lastSearchIdRef.current) {
-        setStatus(withPersistentErrorHint(`Failed to load tracks: ${(error as Error).message}`))
+      // Jellyfin 12 revokes access tokens on logout and when legacy auth is
+      // rejected, so a 401 means the stored session must be dropped instead of retried.
+      if (error instanceof JellyfinApiError && error.isUnauthorized) {
+        stopQuickConnect()
+        localStorage.removeItem(STORAGE_KEY)
+        setToken('')
+        setUserId('')
+        setStatus(withPersistentErrorHint('This Jellyfin session is no longer valid. Please sign in again.'))
+        return
       }
+
+      setStatus(withPersistentErrorHint(`Failed to load tracks: ${(error as Error).message}`))
     } finally {
       if (currentSearchId === lastSearchIdRef.current) {
         setIsLoadingTracks(false)
@@ -951,6 +965,7 @@ function App() {
       const result = await authenticate(serverUrl, username, password)
       setToken(result.AccessToken)
       setUserId(result.User.Id)
+      setUsername(result.User.Name)
       setStatus(`Welcome ${result.User.Name}. Loading tracks...`)
       await loadTracks(search, {
         token: result.AccessToken,
@@ -963,8 +978,136 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    let cancelled = false
+
+    // Quick Connect is the auth path for SSO/password-less accounts.
+    void isQuickConnectEnabled(serverUrl).then((enabled) => {
+      if (!cancelled) {
+        setQuickConnectAvailable(enabled)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [serverUrl])
+
+  function stopQuickConnect(): void {
+    quickConnectGenRef.current += 1
+
+    if (quickConnectTimerRef.current) {
+      window.clearTimeout(quickConnectTimerRef.current)
+      quickConnectTimerRef.current = 0
+    }
+  }
+
+  function endQuickConnect(message: string): void {
+    stopQuickConnect()
+    setQuickConnectCode('')
+    setIsQuickConnectWaiting(false)
+    setStatus(message)
+  }
+
+  async function waitForQuickConnect(
+    baseUrl: string,
+    secret: string,
+    generation: number,
+    deadline: number,
+  ): Promise<void> {
+    while (generation === quickConnectGenRef.current && Date.now() < deadline) {
+      try {
+        const state = await getQuickConnectState(baseUrl, secret)
+
+        if (generation !== quickConnectGenRef.current) {
+          return
+        }
+
+        if (state.Authenticated) {
+          const result = await authenticateWithQuickConnect(baseUrl, secret)
+
+          if (generation !== quickConnectGenRef.current) {
+            return
+          }
+
+          stopQuickConnect()
+          setQuickConnectCode('')
+          setIsQuickConnectWaiting(false)
+          setToken(result.AccessToken)
+          setUserId(result.User.Id)
+          setUsername(result.User.Name)
+          setStatus(`Signed in as ${result.User.Name}. Loading tracks...`)
+          await loadTracks(search, {
+            token: result.AccessToken,
+            userId: result.User.Id,
+          })
+          return
+        }
+      } catch (error) {
+        if (generation !== quickConnectGenRef.current) {
+          return
+        }
+
+        // 401/404 mean the code was denied or removed server side; anything else is transient.
+        if (error instanceof JellyfinApiError && (error.status === 401 || error.status === 404)) {
+          endQuickConnect('Quick Connect was declined, or the code expired.')
+          return
+        }
+      }
+
+      await new Promise<void>((resolve) => {
+        quickConnectTimerRef.current = window.setTimeout(resolve, 3000)
+      })
+    }
+
+    if (generation === quickConnectGenRef.current) {
+      endQuickConnect('Quick Connect request expired. Start a new one for a fresh code.')
+    }
+  }
+
+  async function handleQuickConnectStart(): Promise<void> {
+    stopQuickConnect()
+    const generation = quickConnectGenRef.current
+    // The code belongs to the server it was requested from, so pin it for the whole flow.
+    const baseUrl = serverUrl
+
+    setIsQuickConnectWaiting(true)
+    setQuickConnectCode('')
+    setStatus('Requesting a Quick Connect code...')
+
+    try {
+      const result = await initiateQuickConnect(baseUrl)
+
+      if (generation !== quickConnectGenRef.current) {
+        return
+      }
+
+      setQuickConnectCode(result.Code)
+      setStatus(`Enter code ${result.Code} in the Jellyfin app you are signed into, then approve it.`)
+
+      void waitForQuickConnect(baseUrl, result.Secret, generation, Date.now() + 4 * 60 * 1000)
+    } catch (error) {
+      if (generation === quickConnectGenRef.current) {
+        endQuickConnect(`Quick Connect failed: ${(error as Error).message}`)
+      }
+    }
+  }
+
+  function handleQuickConnectCancel(): void {
+    endQuickConnect('Quick Connect request cancelled.')
+  }
+
+  useEffect(() => stopQuickConnect, [])
+
   function handleLogout(): void {
     playbackRequestIdRef.current += 1
+    stopQuickConnect()
+
+    if (token) {
+      // Revokes the access token so it cannot be replayed after signing out.
+      void logoutSession(serverUrl, token)
+    }
+
     setToken('')
     setUserId('')
     setTracks([])
@@ -1910,6 +2053,7 @@ function App() {
                   <input
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
+                    autoComplete="username"
                     required
                   />
                 </label>
@@ -1919,6 +2063,7 @@ function App() {
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
                   />
                 </label>
                 <div className="auth-actions">
@@ -1933,6 +2078,58 @@ function App() {
                   </button>
                 </div>
               </form>
+
+              <div className="quick-connect">
+                <div className="quick-connect-head">
+                  <h3>Quick Connect</h3>
+                  {quickConnectCode && (
+                    <div className="quick-connect-code-actions">
+                      <span className="quick-connect-code">{quickConnectCode}</span>
+                      <button
+                        type="button"
+                        className="ghost reset-btn"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(quickConnectCode)
+                        }}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <p className="quick-connect-hint">
+                  {!quickConnectAvailable
+                    ? 'This server has Quick Connect disabled.'
+                    : isQuickConnectWaiting
+                      ? 'Waiting for approval. Enter the code in a Jellyfin session that is already signed in.'
+                      : 'No password needed. Use this when the account is backed by SSO or Quick Connect.'}
+                </p>
+
+                <div className="auth-actions">
+                  <button
+                    type="button"
+                    onClick={handleQuickConnectStart}
+                    disabled={!quickConnectAvailable || isQuickConnectWaiting}
+                  >
+                    {isQuickConnectWaiting ? 'Waiting…' : 'Get code'}
+                  </button>
+                  {isQuickConnectWaiting && (
+                    <button type="button" className="ghost" onClick={handleQuickConnectCancel}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+
+                <a
+                  className="quick-connect-link"
+                  href={buildQuickConnectUrl(serverUrl)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open the Jellyfin Quick Connect page
+                </a>
+              </div>
             </div>
 
             <div className="connection-mods">

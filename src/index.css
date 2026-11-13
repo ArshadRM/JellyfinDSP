@@ -866,6 +866,66 @@ button:disabled {
   margin-top: 0.5rem;
 }
 
+.quick-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(154, 176, 202, 0.18);
+}
+
+.quick-connect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.quick-connect-head h3 {
+  margin: 0;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.quick-connect-code-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.quick-connect-code {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  font-size: 1.35rem;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid rgba(154, 176, 202, 0.3);
+  border-radius: 8px;
+  background: rgba(8, 16, 31, 0.6);
+}
+
+.quick-connect-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.quick-connect-link {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.quick-connect-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .jellyfin-link {
   display: flex;
   align-items: center;
